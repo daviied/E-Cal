@@ -86,91 +86,104 @@ Then create `frontend/lib/import-map.json`:
 The Docker build (below) automates all of this — this section is only for
 running straight off the Python interpreter for quick iteration.
 
-## Running it with Docker
+## Image build & publishing
 
-1. Copy the env file and fill in a real password + session secret. **The
-   login password is set entirely through the `APP_PASSWORD` environment
-   variable** — there's no username, no password stored in the database,
-   nothing to configure in the UI. The container refuses to start if it's
-   missing.
+`docker-compose.yml` runs a **pre-built image** (`ghcr.io/daviied/e-cal:latest`)
+rather than building from source — this is what lets CasaOS (or anything
+else) install it with no local source and no build wait. The image is built
+and published automatically by `.github/workflows/docker-publish.yml`: every
+push to `main` triggers a GitHub Actions run that builds the Dockerfile and
+pushes `latest` (plus a commit-sha tag) to GitHub Container Registry.
+
+**One-time setup after pushing this repo to GitHub:** the first Actions run
+will publish the image, but GHCR packages built this way default to
+**private**, even in a public repo. Make it public once so CasaOS (or anyone)
+can pull it without authenticating:
+
+1. Push to `main` (or trigger the workflow manually) and let the Action finish.
+2. On GitHub: your profile → **Packages** → `e-cal` → **Package settings** →
+   change visibility to **Public**.
+
+If you'd rather build locally instead of waiting on Actions:
+```bash
+docker compose build
+docker compose up -d
+```
+(this still uses `image:`, so `docker compose build` will tag it locally as
+`ghcr.io/daviied/e-cal:latest` and `up -d` will run that local copy instead
+of pulling).
+
+## Running it locally with Docker (non-CasaOS)
+
+1. Pull and start:
 
 ```bash
-cp .env.example .env
+docker compose up -d
 ```
 
-```env
-APP_PASSWORD=pick-a-strong-password
-SESSION_SECRET=$(openssl rand -hex 32)
-HTTPS_ONLY=true
-```
+2. Before you do, open `docker-compose.yml` and edit the `environment:`
+   values directly — **the login password is the `APP_PASSWORD` value**
+   (there's no username, and the container refuses to start without it).
+   Also generate a real `SESSION_SECRET` (e.g. `openssl rand -hex 32`).
 
-2. Build and start:
+3. The bind-mount volume defaults to the CasaOS convention path
+   `/DATA/AppData/calcvault/data`. On a non-CasaOS host, either create that
+   directory first (`mkdir -p /DATA/AppData/calcvault/data`) or change the
+   `volumes:` `source:` to something like `./data`.
 
-```bash
-docker compose up -d --build
-```
-
-3. By default the app publishes port `8000` on all interfaces, so it's
-   reachable at `http://<host-ip>:8000` on your LAN immediately — convenient
-   for CasaOS's dashboard or a reverse proxy container to reach. Once you
-   have a reverse proxy in front doing TLS (recommended for anything beyond
-   your own LAN), lock it down by changing the `ports:` line in
-   `docker-compose.yml` to `"127.0.0.1:8000:8000"` so only that proxy (running
-   on the same host) can reach it directly.
-
-   Point the proxy at it with something like an Nginx
-   `location / { proxy_pass http://127.0.0.1:8000; }` block (make sure it
-   forwards `X-Forwarded-Proto`), or a Caddy `reverse_proxy 127.0.0.1:8000`
-   (Caddy sets forwarded headers automatically). Uvicorn runs with
-   `--proxy-headers`, so it trusts those forwarded headers for detecting
-   HTTPS.
-
-4. If you're testing locally without TLS/a proxy first, set `HTTPS_ONLY=false`
-   in `.env` temporarily — otherwise the browser won't send the session
-   cookie back over plain HTTP and you'll get bounced to the login screen in
-   a loop. Flip it back to `true` once you're behind real HTTPS.
-
-Data persists in `./data/calcvault.db` on the host; back that file up like
-you would any SQLite database.
+4. By default the app publishes port `8000` on all interfaces, reachable at
+   `http://<host-ip>:8000`. Once you have a reverse proxy in front doing TLS,
+   set `HTTPS_ONLY=true` and point the proxy at `http://127.0.0.1:8000` (an
+   Nginx `location / { proxy_pass http://127.0.0.1:8000; }` block, forwarding
+   `X-Forwarded-Proto`, or Caddy's `reverse_proxy 127.0.0.1:8000` which sets
+   forwarded headers automatically — Uvicorn runs with `--proxy-headers` so
+   it trusts them). Leave `HTTPS_ONLY=false` for plain-http/LAN-only use,
+   otherwise the login cookie won't be sent back and you'll loop on the login
+   screen.
 
 ## Running it on CasaOS
 
-CasaOS is just Debian + Docker under the hood, so the compose file above
-works as-is. Two ways to install it:
-
-### Option A — terminal (most reliable)
-
-1. Copy this whole `calcvault/` project folder onto the CasaOS box, ideally
-   under `/DATA/AppData/calcvault` (CasaOS's usual convention for app data —
-   the compose file's `./data` volume will then resolve to
-   `/DATA/AppData/calcvault/data`, which shows up nicely in CasaOS's Files app).
-2. SSH into the device (or use CasaOS's built-in terminal app) and `cd` into
-   that folder.
-3. Same steps as above: `cp .env.example .env`, edit it with a real
-   `APP_PASSWORD`/`SESSION_SECRET`, then `docker compose up -d --build`.
-4. CasaOS should pick up the running container automatically; if not, its
-   dashboard can also just show it as an externally-managed container.
-
-### Option B — CasaOS's "Install a customized app" UI
+### Option A — CasaOS's "Install a customized app" UI
 
 1. Open CasaOS → App Store → the "+" / custom-install option that accepts a
    docker-compose YAML.
-2. Paste in `docker-compose.yml`. CasaOS should detect the `${APP_PASSWORD}`,
-   `${SESSION_SECRET}`, and `${HTTPS_ONLY}` references and prompt for values
-   in its install form — fill in a real password and a random session secret
-   there (e.g. from `openssl rand -hex 32`).
-3. One catch: CasaOS's custom-install UI builds from a compose file directly
-   and may not have this project's `Dockerfile`/`backend`/`frontend` source
-   available to build from, since `build: .` needs that context present on
-   disk. If the install fails on the build step, use Option A instead (it
-   always works since it's just `docker compose` on the actual filesystem),
-   or build the image once yourself (`docker compose build`, then
-   `docker tag calcvault-calcvault yourname/calcvault:latest` and push it
-   somewhere CasaOS can pull it from), swapping `build: .` for
-   `image: yourname/calcvault:latest` in the compose file.
-4. The `x-casaos:` block in `docker-compose.yml` is purely cosmetic (gives
-   CasaOS a title/category to show) — delete it freely if it confuses your
-   version of the UI.
+2. Paste in the contents of `docker-compose.yml`.
+3. CasaOS reads the `x-casaos.envs` descriptions and should show editable
+   fields for `APP_PASSWORD`, `SESSION_SECRET`, and `HTTPS_ONLY` in its
+   install form — set a real password and a random session secret there.
+4. Install. Since it's a plain `image:` pull (no build), this should be fast
+   — just needs to download the image once.
+
+### Option B — terminal
+
+```bash
+mkdir -p /DATA/AppData/calcvault && cd /DATA/AppData/calcvault
+curl -o docker-compose.yml https://raw.githubusercontent.com/daviied/E-Cal/main/docker-compose.yml
+# edit the environment: values in docker-compose.yml directly (APP_PASSWORD, SESSION_SECRET)
+docker compose up -d
+```
+
+The volume's `source:` already points at `/DATA/AppData/calcvault/data` —
+CasaOS's usual convention — so it shows up nicely in its Files app.
+
+### Updating later
+
+New pushes to `main` rebuild and republish `latest` automatically. To pick up
+a new version on the CasaOS box:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+### Note on this specific repo
+
+`daviied/E-Cal` is currently a **public** repo that was populated via a
+manual file upload rather than `git push`, so it's missing `.gitignore` and
+still has a `data/calcvault.db` and `server.log` sitting in it from that
+upload — worth deleting those from the repo (and adding `.gitignore`) before
+relying on it, both so a public clone doesn't carry your test data and so a
+future edit doesn't accidentally commit a real `.env`.
 
 ## Notes / things worth knowing
 

@@ -1,34 +1,84 @@
 name: calcvault
-
 services:
   calcvault:
-    build: .
     container_name: calcvault
-    restart: unless-stopped
+    image: ghcr.io/daviied/e-cal:latest
     environment:
-      - APP_PASSWORD=${APP_PASSWORD}
-      - SESSION_SECRET=${SESSION_SECRET}
-      - HTTPS_ONLY=${HTTPS_ONLY:-true}
+      - APP_PASSWORD=change-me
+      - SESSION_SECRET=change-me-too-a-long-random-string
+      - HTTPS_ONLY=false
       - DB_PATH=/app/data/calcvault.db
-    volumes:
-      - ./data:/app/data
+    labels:
+      icon: https://cdn.jsdelivr.net/gh/daviied/E-Cal@main/icon.svg
     ports:
-      # Reachable on the LAN by default so CasaOS's dashboard / a reverse
-      # proxy container can reach it immediately. Once you have TLS via a
-      # reverse proxy in front (recommended), change this to
-      # "127.0.0.1:8000:8000" so the app is only reachable through it.
-      - "8000:8000"
-
-    # Cosmetic metadata for CasaOS's "Install a customized app" screen
-    # (icon/title/category). Safe to delete - ignored by plain `docker
-    # compose` and by CasaOS itself if omitted.
+      - target: 8000
+        published: "8000"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /DATA/AppData/calcvault/data
+        target: /app/data
     x-casaos:
-      title:
-        en_US: CalcVault
-      category: Utilities
-      port_map: "8000"
-      main: calcvault
-      description:
-        en_US: >-
-          Self-hosted, Desmos-style calculator with folders and
-          hideable/labeled inputs and outputs.
+      envs:
+        - container: APP_PASSWORD
+          description:
+            en_us: The login password for the app. Change this before installing - there is no username, just this shared password.
+        - container: SESSION_SECRET
+          description:
+            en_us: Long random string used to sign login session cookies. Change this to your own random value (e.g. output of `openssl rand -hex 32`).
+        - container: HTTPS_ONLY
+          description:
+            en_us: Set to true once you have a reverse proxy in front of this app doing HTTPS. Leave false for plain-http/LAN-only use, otherwise login will fail.
+      volumes:
+        - container: /app/data
+          description:
+            en_us: Where the SQLite database (all folders and calculators) is stored.
+      ports:
+        - container: "8000"
+          description:
+            en_us: Web UI port.
+    devices: []
+    cap_add: []
+    command: []
+    networks:
+      - default
+    privileged: false
+    hostname: calcvault
+networks:
+  default:
+    name: calcvault_default
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  author: daviied
+  category: Utilities
+  description:
+    en_us: |
+      A self-hosted, Desmos-style calculator - computation only, no graphing.
+
+      Organize calculators into folders. Each calculator is a stack of lines evaluated top-to-bottom, same mental model as Desmos: define a = 5, then b = a * 2 on the next line, etc. Math is typed and rendered the same way Desmos does, via MathLive.
+
+      Any line can be marked Hidden, and the Lock button in the header hides all lines marked that way at once - handy for tucking away the working equations. Lines can also be marked as a labeled Input or Output, independent of the underlying variable name or expression, so you can build a clean "type one thing in, see one thing out" panel (e.g. an input labeled "Voltage" and an output labeled "Power") without exposing the formula behind it.
+
+      All calculators and folders are stored server-side in SQLite. Login is a single shared password set via the APP_PASSWORD environment variable.
+  developer: daviied
+  icon: https://cdn.jsdelivr.net/gh/daviied/E-Cal@main/icon.svg
+  is_uncontrolled: false
+  main: calcvault
+  store_app_id: calcvault
+  tagline:
+    en_us: Self-hosted Desmos-style calculator with folders and labeled inputs/outputs
+  thumbnail: https://cdn.jsdelivr.net/gh/daviied/E-Cal@main/icon.svg
+  tips:
+    before_install:
+      en_us: |
+        Set APP_PASSWORD to a real password before installing - this is the only login credential.
+        Leave HTTPS_ONLY=false unless you already have a reverse proxy doing TLS in front of this app.
+  title:
+    en_us: CalcVault
+  hostname: ""
+  scheme: http
+  index: /
+  port_map: "8000"
