@@ -176,6 +176,17 @@ docker compose pull
 docker compose up -d
 ```
 
+**Your calculators and folders are safe across updates.** They live in
+`calcvault.db` on the bind-mounted `/DATA/AppData/calcvault/data` volume, not
+inside the container — `docker compose pull` / `up -d` only replaces the
+container and its code, never that host directory. The only ways to actually
+lose data are `docker compose down -v` (the `-v` removes volumes - don't use
+it) or manually deleting that data folder. The app also reads its database
+schema with `CREATE TABLE IF NOT EXISTS`, so it never drops/recreates tables
+on startup, and the frontend auto-converts any older data shape it
+encounters (e.g. calculators made before Input/Output lines existed) rather
+than failing to load them.
+
 ### Note on this specific repo
 
 `daviied/E-Cal` is currently a **public** repo that was populated via a

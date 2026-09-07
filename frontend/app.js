@@ -193,6 +193,48 @@ function renderTree() {
   root.appendChild(renderFolderLevel(null));
 }
 
+// Drag-and-drop reorganizing of the sidebar tree: folders can be dragged
+// onto other folders to nest them, and calculators can be dragged onto any
+// folder (or onto empty space, to land at the top level) to move them
+// there. { type: 'folder' | 'calc', id }
+let draggingItem = null;
+
+// Dropping something onto empty sidebar space (not onto a folder header,
+// which stops propagation in renderFolder) moves it back to the top level.
+// #tree is a static element that's never recreated, so this only needs to
+// be wired up once - not on every renderTree() call.
+const treeRootEl = document.getElementById('tree');
+treeRootEl.addEventListener('dragover', (e) => {
+  if (!draggingItem) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+});
+treeRootEl.addEventListener('drop', (e) => {
+  e.preventDefault();
+  if (!draggingItem) return;
+  if (draggingItem.type === 'folder') moveFolder(draggingItem.id, null);
+  else moveCalcToFolder(draggingItem.id, null);
+});
+
+// A folder can't be moved into itself or into one of its own descendants -
+// that would orphan it from the tree entirely.
+function isFolderOrDescendant(candidateId, rootId) {
+  if (candidateId === rootId) return true;
+  return childFolders(rootId).some((f) => isFolderOrDescendant(candidateId, f.id));
+}
+
+async function moveFolder(folderId, newParentId) {
+  if (folderId === newParentId) return;
+  if (isFolderOrDescendant(newParentId, folderId)) return; // would create a cycle
+  await apiPatch(`/api/folders/${folderId}`, { parent_id: newParentId });
+  await loadTree();
+}
+
+async function moveCalcToFolder(calcId, folderId) {
+  await apiPatch(`/api/calculators/${calcId}`, { folder_id: folderId });
+  await loadTree();
+}
+
 function renderFolderLevel(parentId) {
   const frag = document.createDocumentFragment();
   for (const folder of childFolders(parentId)) {
@@ -210,11 +252,12 @@ function renderFolder(folder) {
 
   const header = document.createElement('div');
   header.className = 'tree-folder-header';
+  header.draggable = true;
   header.innerHTML = `<span>&#128193; ${escapeHtml(folder.name)}</span>`;
 
   const actions = document.createElement('span');
   actions.className = 'tree-row-actions';
-  actions.innerHTML = `<button data-act="rename" title="Rename">&#9998;</button><button data-act="delete" title="Delete">&#10005;</button>`;
+  actions.innerHTML = `<button data-act="add-sub" title="New subfolder here">+</button><button data-act="rename" title="Rename">&#9998;</button><button data-act="delete" title="Delete">&#10005;</button>`;
   header.appendChild(actions);
 
   const children = document.createElement('div');
@@ -226,6 +269,47 @@ function renderFolder(folder) {
     children.style.display = children.style.display === 'none' ? '' : 'none';
   });
 
+  // Drag this folder onto another folder's header to nest it there. This
+  // header is also a valid drop target for a dragged calculator (to file it
+  // into this folder).
+  header.addEventListener('dragstart', (e) => {
+    draggingItem = { type: 'folder', id: folder.id };
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(folder.id));
+    e.stopPropagation();
+    requestAnimationFrame(() => header.classList.add('dragging'));
+  });
+  header.addEventListener('dragend', () => {
+    draggingItem = null;
+    document.querySelectorAll('.dragging, .drag-over').forEach((el) => {
+      el.classList.remove('dragging', 'drag-over');
+    });
+  });
+  header.addEventListener('dragover', (e) => {
+    if (!draggingItem) return;
+    if (draggingItem.type === 'folder' && draggingItem.id === folder.id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    header.classList.add('drag-over');
+  });
+  header.addEventListener('dragleave', () => header.classList.remove('drag-over'));
+  header.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    header.classList.remove('drag-over');
+    if (!draggingItem) return;
+    if (draggingItem.type === 'folder') moveFolder(draggingItem.id, folder.id);
+    else moveCalcToFolder(draggingItem.id, folder.id);
+  });
+
+  actions.querySelector('[data-act="add-sub"]').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const name = await askPrompt('Subfolder name');
+    if (!name) return;
+    await apiPost('/api/folders', { name, parent_id: folder.id });
+    await loadTree();
+  });
   actions.querySelector('[data-act="rename"]').addEventListener('click', async (e) => {
     e.stopPropagation();
     const name = await askPrompt('Rename folder', folder.name);
@@ -251,6 +335,7 @@ function renderFolder(folder) {
 function renderCalcItem(calc) {
   const item = document.createElement('div');
   item.className = 'tree-item' + (selected && selected.id === calc.id ? ' active' : '');
+  item.draggable = true;
   item.innerHTML = `<span>${escapeHtml(calc.name)}</span>`;
 
   const actions = document.createElement('span');
@@ -261,6 +346,21 @@ function renderCalcItem(calc) {
   item.addEventListener('click', (e) => {
     if (e.target.closest('button')) return;
     selectCalculator(calc.id);
+  });
+
+  // Drag onto a folder header to file it there, or onto empty sidebar
+  // space to move it back to the top level.
+  item.addEventListener('dragstart', (e) => {
+    draggingItem = { type: 'calc', id: calc.id };
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(calc.id));
+    requestAnimationFrame(() => item.classList.add('dragging'));
+  });
+  item.addEventListener('dragend', () => {
+    draggingItem = null;
+    document.querySelectorAll('.dragging, .drag-over').forEach((el) => {
+      el.classList.remove('dragging', 'drag-over');
+    });
   });
   actions.querySelector('[data-act="delete"]').addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -333,10 +433,34 @@ function clearSelection() {
   renderTree();
 }
 
+// Calculators created under older versions of this app can have data
+// shapes the current UI doesn't expect. Rather than crash on them (which
+// would look like "the update deleted my calculator"), convert them into
+// the current { locked, lines } shape on load, preserving whatever they
+// contained.
+function normalizeCalcData(data) {
+  if (Array.isArray(data.lines)) {
+    if (data.locked === undefined) data.locked = false;
+    return data;
+  }
+  // Pre-unification "Function" kind: { paramName, paramDefault, formulaLatex, outputLabel }
+  if ('formulaLatex' in data || 'paramName' in data) {
+    const varName = data.paramName || 'x';
+    return {
+      locked: false,
+      lines: [
+        newLine('input', { varName, label: varName, value: data.paramDefault || '0' }),
+        newLine('output', { expr: data.formulaLatex || '', label: data.outputLabel || 'Result' }),
+      ],
+    };
+  }
+  // Unrecognized/empty - start fresh rather than crash the view.
+  return { locked: false, lines: [] };
+}
+
 async function selectCalculator(id) {
   currentCalc = await apiGet(`/api/calculators/${id}`);
-  // older data created before inputs/outputs/lock existed
-  if (currentCalc.data.locked === undefined) currentCalc.data.locked = false;
+  currentCalc.data = normalizeCalcData(currentCalc.data);
   selected = { id };
   views.empty.hidden = true;
   views.calculator.hidden = false;
@@ -371,8 +495,18 @@ function scheduleSave() {
 // every control) to a clean view: hidden 'none' lines disappear, and
 // input/output lines show only their label + value, never the underlying
 // variable name or expression.
-function newLine(role = 'none') {
-  return { id: crypto.randomUUID(), role, hidden: false, latex: '', varName: '', label: '', value: '', expr: '' };
+function newLine(role = 'none', overrides = {}) {
+  return {
+    id: crypto.randomUUID(),
+    role,
+    hidden: false,
+    latex: '',
+    varName: '',
+    label: '',
+    value: '',
+    expr: '',
+    ...overrides,
+  };
 }
 
 const calcNameInput = document.getElementById('calc-name');

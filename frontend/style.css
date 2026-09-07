@@ -170,6 +170,16 @@ button.primary {
   background: var(--panel);
 }
 
+.tree-folder-header.dragging,
+.tree-item.dragging {
+  opacity: 0.4;
+}
+
+.tree-folder-header.drag-over {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+}
+
 .tree-folder-children {
   margin-left: 14px;
   border-left: 1px solid var(--border);
