@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CalcVault</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/lib/mathjs.min.js"></script>
+<script type="importmap">
+{"imports": {"mathlive": "/lib/mathlive/mathlive.min.mjs"}}
+</script>
+</head>
+<body>
+
+<div id="login-overlay" class="overlay">
+  <form id="login-form" class="login-box">
+    <h1>CalcVault</h1>
+    <input type="password" id="login-password" placeholder="Password" autocomplete="current-password" autofocus>
+    <button type="submit">Log in</button>
+    <p id="login-error" class="error"></p>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <aside id="sidebar">
+    <div id="sidebar-header">
+      <h1>CalcVault</h1>
+      <button id="btn-logout" title="Log out">Log out</button>
+    </div>
+    <div id="sidebar-actions">
+      <button id="btn-new-folder">+ Folder</button>
+      <button id="btn-new-calc">+ Calculator</button>
+    </div>
+    <div id="tree"></div>
+  </aside>
+
+  <main id="main">
+    <div id="empty-state">
+      <p>Select a calculator from the sidebar, or create a new one.</p>
+    </div>
+
+    <div id="calc-view" class="view" hidden>
+      <div class="view-header">
+        <input type="text" id="calc-name" class="name-input">
+        <select id="calc-move" title="Move to folder"></select>
+        <button id="calc-lock-toggle">Unlocked</button>
+        <button id="calc-delete" class="danger">Delete</button>
+      </div>
+      <div id="calc-lines"></div>
+      <button id="calc-add-line">+ Add line</button>
+    </div>
+  </main>
+</div>
+
+<div id="modal-overlay" class="overlay" hidden>
+  <div class="modal-box">
+    <p id="modal-message"></p>
+    <input type="text" id="modal-input">
+    <div class="modal-actions">
+      <button id="modal-cancel">Cancel</button>
+      <button id="modal-ok" class="primary">OK</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

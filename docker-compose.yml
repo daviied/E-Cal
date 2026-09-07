@@ -1,0 +1,34 @@
+name: calcvault
+
+services:
+  calcvault:
+    build: .
+    container_name: calcvault
+    restart: unless-stopped
+    environment:
+      - APP_PASSWORD=${APP_PASSWORD}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - HTTPS_ONLY=${HTTPS_ONLY:-true}
+      - DB_PATH=/app/data/calcvault.db
+    volumes:
+      - ./data:/app/data
+    ports:
+      # Reachable on the LAN by default so CasaOS's dashboard / a reverse
+      # proxy container can reach it immediately. Once you have TLS via a
+      # reverse proxy in front (recommended), change this to
+      # "127.0.0.1:8000:8000" so the app is only reachable through it.
+      - "8000:8000"
+
+    # Cosmetic metadata for CasaOS's "Install a customized app" screen
+    # (icon/title/category). Safe to delete - ignored by plain `docker
+    # compose` and by CasaOS itself if omitted.
+    x-casaos:
+      title:
+        en_US: CalcVault
+      category: Utilities
+      port_map: "8000"
+      main: calcvault
+      description:
+        en_US: >-
+          Self-hosted, Desmos-style calculator with folders and
+          hideable/labeled inputs and outputs.

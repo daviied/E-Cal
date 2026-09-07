@@ -1,0 +1,246 @@
+INFO:     Started server process [9944]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:56117 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57531 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57531 - "GET /style.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53016 - "GET /lib/mathjs.min.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:50851 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50851 - "GET /lib/mathlive/mathlive.min.mjs HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:50851 - "GET /api/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50851 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:57531 - "GET /api/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57531 - "GET /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57531 - "GET /lib/mathlive/fonts/KaTeX_Main-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:50851 - "GET /lib/mathlive/fonts/KaTeX_Main-BoldItalic.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:53016 - "GET /lib/mathlive/fonts/KaTeX_Main-Bold.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:57531 - "GET /lib/mathlive/fonts/KaTeX_Main-Italic.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:52724 - "GET /lib/mathlive/fonts/KaTeX_Math-Italic.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:50054 - "GET /lib/mathlive/fonts/KaTeX_Math-BoldItalic.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:49329 - "GET /lib/mathlive/fonts/KaTeX_AMS-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:50851 - "GET /lib/mathlive/fonts/KaTeX_Caligraphic-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:53016 - "GET /lib/mathlive/fonts/KaTeX_Caligraphic-Bold.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:57531 - "GET /lib/mathlive/fonts/KaTeX_Fraktur-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:52724 - "GET /lib/mathlive/fonts/KaTeX_Fraktur-Bold.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:50054 - "GET /lib/mathlive/fonts/KaTeX_SansSerif-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:49329 - "GET /lib/mathlive/fonts/KaTeX_SansSerif-Bold.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:50851 - "GET /lib/mathlive/fonts/KaTeX_SansSerif-Italic.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:52724 - "GET /lib/mathlive/fonts/KaTeX_Size1-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:53016 - "GET /lib/mathlive/fonts/KaTeX_Script-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:57531 - "GET /lib/mathlive/fonts/KaTeX_Typewriter-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:49329 - "GET /lib/mathlive/fonts/KaTeX_Size3-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:50851 - "GET /lib/mathlive/fonts/KaTeX_Size4-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:50054 - "GET /lib/mathlive/fonts/KaTeX_Size2-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:54174 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62166 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52301 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52301 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52301 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58091 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58091 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55703 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64081 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64081 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64081 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64081 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57173 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50143 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50143 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63935 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57042 - "PATCH /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57042 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:57042 - "GET /style.css HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:63244 - "GET /app.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:63244 - "GET /api/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57042 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:63244 - "GET /api/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63244 - "GET /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62997 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62997 - "GET /style.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59427 - "GET /lib/mathjs.min.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51567 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59427 - "GET /lib/mathlive/mathlive.min.mjs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59427 - "GET /api/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59427 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:59427 - "POST /api/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59427 - "GET /api/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52670 - "POST /api/folders HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52670 - "GET /api/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60151 - "GET /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60151 - "GET /lib/mathlive/fonts/KaTeX_Main-Regular.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50216 - "GET /lib/mathlive/fonts/KaTeX_Main-BoldItalic.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56644 - "GET /lib/mathlive/fonts/KaTeX_Math-Italic.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64352 - "GET /lib/mathlive/fonts/KaTeX_Main-Bold.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57105 - "GET /lib/mathlive/fonts/KaTeX_Math-BoldItalic.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59337 - "GET /lib/mathlive/fonts/KaTeX_Main-Italic.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60151 - "GET /lib/mathlive/fonts/KaTeX_AMS-Regular.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59337 - "GET /lib/mathlive/fonts/KaTeX_Fraktur-Regular.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50216 - "GET /lib/mathlive/fonts/KaTeX_Caligraphic-Regular.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56644 - "GET /lib/mathlive/fonts/KaTeX_Fraktur-Bold.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64352 - "GET /lib/mathlive/fonts/KaTeX_Caligraphic-Bold.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57105 - "GET /lib/mathlive/fonts/KaTeX_SansSerif-Regular.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60151 - "GET /lib/mathlive/fonts/KaTeX_SansSerif-Bold.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57105 - "GET /lib/mathlive/fonts/KaTeX_SansSerif-Italic.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50216 - "GET /lib/mathlive/fonts/KaTeX_Script-Regular.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56644 - "GET /lib/mathlive/fonts/KaTeX_Typewriter-Regular.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64352 - "GET /lib/mathlive/fonts/KaTeX_Size1-Regular.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59337 - "GET /lib/mathlive/fonts/KaTeX_Size2-Regular.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60151 - "GET /lib/mathlive/fonts/KaTeX_Size3-Regular.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57105 - "GET /lib/mathlive/fonts/KaTeX_Size4-Regular.woff2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60111 - "DELETE /api/calculators/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60111 - "GET /api/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56175 - "POST /api/calculators HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56175 - "GET /api/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56175 - "GET /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56175 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56175 - "GET /api/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56175 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56175 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56175 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56175 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56175 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58674 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58674 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58674 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58674 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58674 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58674 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51115 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:51115 - "GET /style.css HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:50326 - "GET /lib/mathjs.min.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:58311 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58311 - "GET /lib/mathlive/mathlive.min.mjs HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:58311 - "GET /api/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58311 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:50326 - "GET /api/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63083 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50326 - "GET /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50326 - "GET /lib/mathlive/fonts/KaTeX_Main-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:58311 - "GET /lib/mathlive/fonts/KaTeX_Main-BoldItalic.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:51115 - "GET /lib/mathlive/fonts/KaTeX_Main-Bold.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:49619 - "GET /lib/mathlive/fonts/KaTeX_Main-Italic.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:59717 - "GET /lib/mathlive/fonts/KaTeX_Math-Italic.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:61126 - "GET /lib/mathlive/fonts/KaTeX_Math-BoldItalic.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:50326 - "GET /lib/mathlive/fonts/KaTeX_AMS-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:58311 - "GET /lib/mathlive/fonts/KaTeX_Caligraphic-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:51115 - "GET /lib/mathlive/fonts/KaTeX_Caligraphic-Bold.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:49619 - "GET /lib/mathlive/fonts/KaTeX_Fraktur-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:59717 - "GET /lib/mathlive/fonts/KaTeX_Fraktur-Bold.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:61126 - "GET /lib/mathlive/fonts/KaTeX_SansSerif-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:50326 - "GET /lib/mathlive/fonts/KaTeX_SansSerif-Bold.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:58311 - "GET /lib/mathlive/fonts/KaTeX_SansSerif-Italic.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:49619 - "GET /lib/mathlive/fonts/KaTeX_Typewriter-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:61126 - "GET /lib/mathlive/fonts/KaTeX_Size2-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:58311 - "GET /lib/mathlive/fonts/KaTeX_Size4-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:59717 - "GET /lib/mathlive/fonts/KaTeX_Size1-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:51115 - "GET /lib/mathlive/fonts/KaTeX_Script-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:50326 - "GET /lib/mathlive/fonts/KaTeX_Size3-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:62835 - "POST /api/calculators HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62835 - "GET /api/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62835 - "GET /api/calculators/6 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62835 - "PATCH /api/calculators/6 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62835 - "PATCH /api/calculators/6 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53665 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:56526 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53665 - "GET /style.css HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:56526 - "GET /api/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56526 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:53665 - "GET /api/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53665 - "GET /api/calculators/6 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53494 - "PATCH /api/calculators/6 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56467 - "PATCH /api/calculators/6 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56467 - "PATCH /api/calculators/6 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62869 - "POST /api/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62870 - "GET /api/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58148 - "DELETE /api/calculators/6 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60634 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:60634 - "GET /style.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65240 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65240 - "GET /api/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65240 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:60634 - "GET /api/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57738 - "POST /api/calculators HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57738 - "GET /api/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57738 - "GET /api/calculators/7 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57738 - "PATCH /api/calculators/7 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57738 - "PATCH /api/calculators/7 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64512 - "PATCH /api/calculators/7 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58165 - "PATCH /api/calculators/7 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58165 - "PATCH /api/calculators/7 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59144 - "PATCH /api/calculators/7 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55794 - "GET / HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:55794 - "GET /style.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49978 - "GET /lib/mathjs.min.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:65320 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65320 - "GET /lib/mathlive/mathlive.min.mjs HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:65320 - "GET /api/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65320 - "GET /api/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65320 - "GET /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65320 - "GET /lib/mathlive/fonts/KaTeX_Main-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:55794 - "GET /lib/mathlive/fonts/KaTeX_Main-BoldItalic.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:49978 - "GET /lib/mathlive/fonts/KaTeX_Main-Bold.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:63487 - "GET /lib/mathlive/fonts/KaTeX_Main-Italic.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:63337 - "GET /lib/mathlive/fonts/KaTeX_Math-Italic.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:65320 - "GET /lib/mathlive/fonts/KaTeX_AMS-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:55320 - "GET /lib/mathlive/fonts/KaTeX_Math-BoldItalic.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:55794 - "GET /lib/mathlive/fonts/KaTeX_Caligraphic-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:63487 - "GET /lib/mathlive/fonts/KaTeX_Fraktur-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:55320 - "GET /lib/mathlive/fonts/KaTeX_SansSerif-Bold.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:65320 - "GET /lib/mathlive/fonts/KaTeX_SansSerif-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:49978 - "GET /lib/mathlive/fonts/KaTeX_Caligraphic-Bold.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:55794 - "GET /lib/mathlive/fonts/KaTeX_SansSerif-Italic.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:63337 - "GET /lib/mathlive/fonts/KaTeX_Fraktur-Bold.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:55320 - "GET /lib/mathlive/fonts/KaTeX_Typewriter-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:55794 - "GET /lib/mathlive/fonts/KaTeX_Size3-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:63487 - "GET /lib/mathlive/fonts/KaTeX_Script-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:65320 - "GET /lib/mathlive/fonts/KaTeX_Size1-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:63337 - "GET /lib/mathlive/fonts/KaTeX_Size4-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:49978 - "GET /lib/mathlive/fonts/KaTeX_Size2-Regular.woff2 HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:49978 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49978 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58606 - "POST /api/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58607 - "GET /api/tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49978 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63514 - "DELETE /api/calculators/7 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49978 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54816 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54816 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54816 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54816 - "PATCH /api/calculators/5 HTTP/1.1" 200 OK
