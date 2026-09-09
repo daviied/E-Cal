@@ -44,7 +44,20 @@ The **Unlocked/Locked** button in the header toggles the whole view:
 
 Press **Enter** inside any line's field to insert a new line of the same
 role right below it, focused and ready to type. Drag a line's grip handle
-(⠿, visible when unlocked) onto another line to reorder them.
+(⠿, visible when unlocked) onto another line to reorder them. Folders in
+the sidebar (draggable onto each other to nest, with a **+** button per
+folder for a subfolder) start collapsed and stay however you leave them
+for the rest of the session.
+
+### Math notes
+
+- `log(x)` is base 10 and `ln(x)` is natural log - the usual calculator/
+  Desmos convention. (The underlying math.js library defaults the other
+  way: `log(x)` natural, no `ln` at all - overridden here on purpose.)
+- `|x|` (absolute value bars) works as expected.
+- Subscripted variable names work as multi-character/word subscripts, e.g.
+  a variable typed as `V_2ab4s` in an Input line's name field matches the
+  same variable referenced as `V_{2ab4s}` in any other line's math-field.
 
 ## Running it locally without Docker (for quick testing)
 
