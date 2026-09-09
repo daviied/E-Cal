@@ -15,9 +15,49 @@ function getFieldLatex(field) {
     return field.value || '';
   }
 }
+// MathLive's ascii-math output needs a couple of fixups before math.js can
+// evaluate it:
+//   - multi-character subscripts (typed as e.g. V_{2ab4s}) come out as
+//     "V_(2a b4s)" - parens instead of braces, and a stray space inserted
+//     between run-together alphanumeric groups. Collapse that back into one
+//     plain identifier "V_2ab4s" so it matches how the same name is typed as
+//     plain text elsewhere (e.g. an Input line's variable-name field).
+//   - absolute value bars |x| come out as literal pipe characters, which
+//     math.js's parser doesn't support at all (| means something else there)
+//     - rewrite |...| pairs as abs(...) instead.
+//   - some operators come out as Unicode symbols or ascii-math-specific
+//     notation math.js's parser doesn't accept: "*" typed directly (not via
+//     the usual \cdot/\times smart conversion) renders as "∗" (U+2217, not
+//     a plain asterisk), and \div renders as the sequence " -: " rather
+//     than "/".
+function cleanSubscripts(ascii) {
+  return ascii.replace(/_\(([^()]*)\)/g, (_, inner) => '_' + inner.replace(/\s+/g, ''));
+}
+function convertAbsBars(ascii) {
+  let prev;
+  let result = ascii;
+  let guard = 0;
+  do {
+    prev = result;
+    result = result.replace(/\|([^|]*)\|/, 'abs($1)');
+    guard++;
+  } while (result !== prev && guard < 20);
+  return result;
+}
+function normalizeOperators(ascii) {
+  return ascii
+    .replace(/∗|×/g, '*') // ∗, ×
+    .replace(/\s*-:\s*/g, '/') // \div
+    .replace(/÷/g, '/') // ÷
+    .replace(/−/g, '-'); // unicode minus sign
+}
+function postProcessAscii(ascii) {
+  return normalizeOperators(convertAbsBars(cleanSubscripts(ascii)));
+}
+
 function getFieldAscii(field) {
   try {
-    return field.getValue('ascii-math') || '';
+    return postProcessAscii(field.getValue('ascii-math') || '');
   } catch {
     return getFieldLatex(field);
   }
@@ -103,7 +143,7 @@ function latexToAscii(latex) {
   if (!latex) return '';
   const f = ensureBridge();
   f.setValue(latex, { format: 'latex' });
-  return f.getValue('ascii-math') || '';
+  return postProcessAscii(f.getValue('ascii-math') || '');
 }
 
 function formatResult(value) {
@@ -122,6 +162,10 @@ function formatResult(value) {
 // ---------- state ----------
 let treeData = { folders: [], calculators: [] };
 let selected = null; // { id, kind }
+// Folders start collapsed by default; opening one adds its id here, and it
+// stays open (even across tree re-renders/reloads within this session)
+// until explicitly collapsed again.
+const expandedFolderIds = new Set();
 let currentCalc = null; // full calculator object being edited
 let saveTimer = null;
 
@@ -227,11 +271,13 @@ async function moveFolder(folderId, newParentId) {
   if (folderId === newParentId) return;
   if (isFolderOrDescendant(newParentId, folderId)) return; // would create a cycle
   await apiPatch(`/api/folders/${folderId}`, { parent_id: newParentId });
+  if (newParentId !== null) expandedFolderIds.add(newParentId);
   await loadTree();
 }
 
 async function moveCalcToFolder(calcId, folderId) {
   await apiPatch(`/api/calculators/${calcId}`, { folder_id: folderId });
+  if (folderId !== null) expandedFolderIds.add(folderId);
   await loadTree();
 }
 
@@ -263,10 +309,20 @@ function renderFolder(folder) {
   const children = document.createElement('div');
   children.className = 'tree-folder-children';
   children.appendChild(renderFolderLevel(folder.id));
+  // Folders start collapsed and stay that way across re-renders (the whole
+  // sidebar rebuilds on every create/rename/delete/move) until explicitly
+  // opened - expandedFolderIds is the source of truth, not this style.
+  children.hidden = !expandedFolderIds.has(folder.id);
 
   header.addEventListener('click', (e) => {
     if (e.target.closest('button')) return;
-    children.style.display = children.style.display === 'none' ? '' : 'none';
+    if (expandedFolderIds.has(folder.id)) {
+      expandedFolderIds.delete(folder.id);
+      children.hidden = true;
+    } else {
+      expandedFolderIds.add(folder.id);
+      children.hidden = false;
+    }
   });
 
   // Drag this folder onto another folder's header to nest it there. This
@@ -308,6 +364,7 @@ function renderFolder(folder) {
     const name = await askPrompt('Subfolder name');
     if (!name) return;
     await apiPost('/api/folders', { name, parent_id: folder.id });
+    expandedFolderIds.add(folder.id);
     await loadTree();
   });
   actions.querySelector('[data-act="rename"]').addEventListener('click', async (e) => {
@@ -860,8 +917,20 @@ function renderLockedLine(line) {
 // Evaluates every line top-to-bottom into one shared scope, exactly like
 // Desmos: plain lines and inputs are assignments that extend the scope,
 // outputs are pure expressions read from it without mutating anything.
+// math.js's built-in log(x) is natural log and it has no ln() at all - the
+// opposite of every calculator/Desmos convention, where log() means base 10
+// and ln() means natural log. Override both in the scope every line
+// evaluates against (a line can still shadow these by assigning its own
+// "log"/"ln" variable, same as it could shadow any other scope entry).
+function baseScope() {
+  return {
+    log: (x, base) => (base === undefined ? Math.log10(x) : Math.log(x) / Math.log(base)),
+    ln: (x) => Math.log(x),
+  };
+}
+
 function computeAll() {
-  const scope = {};
+  const scope = baseScope();
   for (const rowState of calcLineRows) {
     const { line, field, resultEl } = rowState;
     let ascii = '';

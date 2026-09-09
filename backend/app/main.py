@@ -1,9 +1,11 @@
+import hashlib
 import hmac
 import os
 import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
@@ -176,5 +178,33 @@ def delete_calculator(calc_id: int):
 
 app.include_router(auth_router)
 app.include_router(api)
+
+
+def _file_hash(path: str) -> str:
+    try:
+        with open(path, "rb") as f:
+            return hashlib.md5(f.read()).hexdigest()[:10]
+    except OSError:
+        return "0"
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    # index.html is served dynamically (not via the StaticFiles mount below)
+    # specifically so app.js/style.css can be cache-busted with a
+    # content-hash query string. Browsers - and this held true even with a
+    # Cache-Control: no-cache response header - can otherwise keep serving a
+    # stale cached copy of a script tag's src indefinitely after a deploy,
+    # since the URL never changes; a different query string is a genuinely
+    # different URL, which no cache can reuse.
+    html_path = os.path.join(FRONTEND_DIR, "index.html")
+    with open(html_path, "r", encoding="utf-8") as f:
+        html = f.read()
+    app_js_hash = _file_hash(os.path.join(FRONTEND_DIR, "app.js"))
+    style_css_hash = _file_hash(os.path.join(FRONTEND_DIR, "style.css"))
+    html = html.replace('src="/app.js"', f'src="/app.js?v={app_js_hash}"')
+    html = html.replace('href="/style.css"', f'href="/style.css?v={style_css_hash}"')
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
 
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
