@@ -333,6 +333,34 @@ button.primary {
   font-size: 13px;
 }
 
+.matrix-insert-btn {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.cas-btn {
+  flex-shrink: 0;
+  padding: 4px 7px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.copy-btn {
+  flex-shrink: 0;
+  padding: 4px 7px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-dim);
+}
+
+.locked-output-value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
 .calc-line .role-var-input {
   width: 60px;
   flex-shrink: 0;

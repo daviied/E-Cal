@@ -1,16 +1,18 @@
 # Stage 1: fetch and prepare frontend JS libraries (MathLive for Desmos-style
-# math input, math.js for evaluation). Only needed at build time.
+# math input, math.js for evaluation, nerdamer for symbolic CAS operations
+# like d/dx and integration). Only needed at build time.
 FROM node:20-alpine AS assets
 WORKDIR /assets
-RUN npm init -y >/dev/null 2>&1 && npm install mathlive mathjs
+RUN npm init -y >/dev/null 2>&1 && npm install mathlive mathjs nerdamer
 COPY build/generate-importmap.js ./generate-importmap.js
 RUN node generate-importmap.js
-RUN mkdir -p /out/mathlive && \
+RUN mkdir -p /out/mathlive /out/nerdamer && \
     (test -d node_modules/mathlive/dist && cp -r node_modules/mathlive/dist/. /out/mathlive/ || \
      cp -r node_modules/mathlive/*.mjs node_modules/mathlive/*.js node_modules/mathlive/fonts /out/mathlive/) && \
     (cp node_modules/mathjs/lib/browser/math.js /out/mathjs.min.js || \
      cp node_modules/mathjs/dist/math.min.js /out/mathjs.min.js || \
      cp node_modules/mathjs/dist/math.js /out/mathjs.min.js) && \
+    cp node_modules/nerdamer/all.min.js /out/nerdamer/nerdamer.all.min.js && \
     cp out/import-map.json /out/import-map.json
 
 # Stage 2: the actual app

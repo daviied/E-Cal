@@ -30,6 +30,10 @@ function getFieldLatex(field) {
 //     the usual \cdot/\times smart conversion) renders as "∗" (U+2217, not
 //     a plain asterisk), and \div renders as the sequence " -: " rather
 //     than "/".
+//   - a matrix (e.g. from \begin{pmatrix}...\end{pmatrix}) comes out as
+//     ascii-math's own nested-paren notation "((1,2),(3,4))", not math.js's
+//     nested-bracket array literal "[[1,2],[3,4]]" that det()/other matrix
+//     functions expect.
 function cleanSubscripts(ascii) {
   return ascii.replace(/_\(([^()]*)\)/g, (_, inner) => '_' + inner.replace(/\s+/g, ''));
 }
@@ -44,15 +48,77 @@ function convertAbsBars(ascii) {
   } while (result !== prev && guard < 20);
   return result;
 }
+function convertMatrixParens(ascii) {
+  // Matches a paren group whose entire content is one or more paren groups
+  // (the rows), comma separated - i.e. specifically the doubly-nested
+  // "tuple of tuples" shape ascii-math uses for a matrix, not a plain
+  // function call like "sqrt(4)" or a plain tuple like "(2,3)".
+  const pattern = /\(\s*(\([^()]*\)(?:\s*,\s*\([^()]*\))*)\s*\)/g;
+  let prev;
+  let result = ascii;
+  let guard = 0;
+  do {
+    prev = result;
+    result = result.replace(pattern, (whole, inner, offset, full) => {
+      const bracketed = `[${inner.replace(/\(/g, '[').replace(/\)/g, ']')}]`;
+      // "det (...)" is a valid function call in math.js's ascii syntax, but
+      // once the argument itself becomes "[...]" square brackets, "det
+      // [...]" (space then bracket) parses as array *indexing* instead -
+      // wrap it back into an explicit call, "det([...])", when a function
+      // name (e.g. det, \det from MathLive) precedes the matrix.
+      const precededByIdentifier = /[A-Za-z_]\w*\s*$/.test(full.slice(0, offset));
+      return precededByIdentifier ? `(${bracketed})` : bracketed;
+    });
+    guard++;
+  } while (result !== prev && guard < 10);
+  return result;
+}
 function normalizeOperators(ascii) {
   return ascii
-    .replace(/∗|×/g, '*') // ∗, ×
+    .replace(/∗|×|·/g, '*') // ∗, ×, · (middle dot - some apps' clipboard multiplication sign)
     .replace(/\s*-:\s*/g, '/') // \div
     .replace(/÷/g, '/') // ÷
     .replace(/−/g, '-'); // unicode minus sign
 }
 function postProcessAscii(ascii) {
-  return normalizeOperators(convertAbsBars(cleanSubscripts(ascii)));
+  return normalizeOperators(convertMatrixParens(convertAbsBars(cleanSubscripts(ascii))));
+}
+
+// ---------- copying equations out to TI-Nspire ----------
+// TI-Nspire's clipboard is plain text, and (confirmed against a real Nspire)
+// it writes multiplication as an explicit "*" rather than the bare
+// juxtaposition ("ab", "2x") that math.js's ascii-math output uses for
+// implicit multiplication - e.g. copying `14229ab+1` off an Nspire and
+// pasting it into a plain text editor yields the literal text
+// "14229*ab+1". Reassuringly, that direction already works today with zero
+// code changes: MathLive parses pasted plain text the same way it parses
+// typed input, so "ab" becomes two separate single-letter variables `a`,
+// `b` (implicit multiplication) exactly like Desmos/Nspire's own
+// convention, and math.js's ascii-math parser already accepts the
+// resulting "a b" as a * b.
+//
+// The other direction - copying one of *this* app's equations in a form
+// Nspire will accept when pasted into its entry line - needs the reverse
+// transform: walk the parsed expression tree and force every implicit
+// multiplication node back into an explicit "*", since we can't be sure
+// Nspire's parser accepts a bare space (or bare juxtaposition of a
+// multi-character/subscripted variable) as multiplication the way math.js
+// does.
+function explicitMultiplyHandler(node, options) {
+  if (node.type === 'OperatorNode' && node.fn === 'multiply' && node.implicit) {
+    return node.args.map((arg) => arg.toString(options)).join(' * ');
+  }
+  return undefined; // fall through to math.js's default rendering
+}
+function toNspireText(ascii) {
+  if (!ascii || !ascii.trim()) return '';
+  try {
+    return math.parse(ascii).toString({ handler: explicitMultiplyHandler });
+  } catch {
+    // Incomplete/invalid expression (e.g. still being typed) - fall back to
+    // the raw ascii-math text rather than showing nothing.
+    return ascii;
+  }
 }
 
 function getFieldAscii(field) {
@@ -63,6 +129,85 @@ function getFieldAscii(field) {
   }
 }
 
+// ---------- CAS (symbolic differentiation/integration via nerdamer) ----------
+// nerdamer's own math notation disagrees with this app's log()/ln()
+// convention in the exact opposite way math.js's does: nerdamer's bare
+// log(x) IS natural log, and it has no ln() at all (an ln(...) call parses
+// as the variable "ln" implicitly multiplied by its "argument"). So before
+// handing an expression to nerdamer we rewrite the app's log(x) (base 10)
+// as log(x)/log(10) in nerdamer's own natural-log terms, and the app's
+// ln(x) as nerdamer's log(x) - then undo exactly that renaming on the way
+// back (every bare log( nerdamer hands back, including inside the log(10)
+// denominators we introduced, is natural log, so it always maps to ln().
+// Finds the index of the ')' matching the '(' at str[openParenIdx].
+function matchingParen(str, openParenIdx) {
+  let depth = 0;
+  for (let i = openParenIdx; i < str.length; i++) {
+    if (str[i] === '(') depth++;
+    else if (str[i] === ')') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+function isIdentChar(ch) {
+  return !!ch && /[A-Za-z0-9_]/.test(ch);
+}
+// MathLive's ascii-math export puts a space between a function name and its
+// parenthesized argument (e.g. "log (x)", "sin (x)"), which math.js's
+// parser tolerates but nerdamer's does not - nerdamer parses "log (x)" as
+// the bare identifier "log" implicitly multiplied by "(x)", and (worse)
+// parses "log (x)+ln (x)" as a nonsensical single expression rather than a
+// sum, since two of these misparsed calls next to each other confuses its
+// tokenizer. Collapse that space away for known function names before
+// nerdamer ever sees the text.
+const CAS_FUNCTION_NAMES = [
+  'log', 'ln', 'sqrt', 'abs', 'exp', 'det',
+  'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'sinh', 'cosh', 'tanh',
+];
+const CAS_FUNCTION_CALL_SPACE_RE = new RegExp('\\b(' + CAS_FUNCTION_NAMES.join('|') + ')\\s+\\(', 'g');
+function stripCasFunctionCallSpaces(ascii) {
+  return ascii.replace(CAS_FUNCTION_CALL_SPACE_RE, '$1(');
+}
+function rewriteLogForCas(ascii) {
+  let out = '';
+  let i = 0;
+  while (i < ascii.length) {
+    const isLn = ascii.startsWith('ln(', i) && !isIdentChar(ascii[i - 1]);
+    const isLog = !isLn && ascii.startsWith('log(', i) && !isIdentChar(ascii[i - 1]);
+    if (isLn || isLog) {
+      const openIdx = i + (isLn ? 2 : 3);
+      const closeIdx = matchingParen(ascii, openIdx);
+      if (closeIdx !== -1) {
+        const inner = rewriteLogForCas(ascii.slice(openIdx + 1, closeIdx));
+        out += isLn ? `log(${inner})` : `(log(${inner})/log(10))`;
+        i = closeIdx + 1;
+        continue;
+      }
+    }
+    out += ascii[i];
+    i++;
+  }
+  return out;
+}
+function nerdamerLatexToAppConvention(tex) {
+  return tex.replace(/\\mathrm\{log\}/g, '\\ln');
+}
+const CAS_RESERVED_NAMES = new Set([
+  'pi', 'e', 'i', 'abs', 'sqrt', 'exp', 'log', 'ln', 'det',
+  'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'sinh', 'cosh', 'tanh', 'min', 'max', 'mod',
+]);
+function guessCasVariable(ascii) {
+  const idents = ascii.match(/[A-Za-z_][A-Za-z0-9_]*/g) || [];
+  return idents.find((s) => !CAS_RESERVED_NAMES.has(s)) || 'x';
+}
+function computeCasResultLatex(ascii, kind, varName) {
+  const casExpr = rewriteLogForCas(stripCasFunctionCallSpaces(ascii));
+  const nExpr = kind === 'diff' ? nerdamer.diff(casExpr, varName) : nerdamer.integrate(casExpr, varName);
+  return nerdamerLatexToAppConvention(nExpr.toTeX());
+}
+
 // ---------- modal (replaces window.prompt/confirm, which don't render
 // reliably/consistently styled across browser contexts) ----------
 const modalOverlay = document.getElementById('modal-overlay');
@@ -71,16 +216,18 @@ const modalInput = document.getElementById('modal-input');
 const modalCancel = document.getElementById('modal-cancel');
 const modalOk = document.getElementById('modal-ok');
 
-function askModal({ message, defaultValue = '', showInput = true }) {
+function askModal({ message, defaultValue = '', showInput = true, hideCancel = false }) {
   return new Promise((resolve) => {
     modalMessage.textContent = message;
     modalInput.hidden = !showInput;
     modalInput.value = defaultValue;
+    modalCancel.hidden = hideCancel;
     modalOverlay.hidden = false;
     if (showInput) modalInput.focus();
 
     const cleanup = () => {
       modalOverlay.hidden = true;
+      modalCancel.hidden = false;
       modalOk.removeEventListener('click', onOk);
       modalCancel.removeEventListener('click', onCancel);
       modalInput.removeEventListener('keydown', onKeydown);
@@ -104,6 +251,7 @@ function askModal({ message, defaultValue = '', showInput = true }) {
 }
 const askPrompt = (message, defaultValue = '') => askModal({ message, defaultValue, showInput: true });
 const askConfirm = (message) => askModal({ message, showInput: false });
+const askAlert = (message) => askModal({ message, showInput: false, hideCancel: true });
 
 // ---------- tiny fetch helpers ----------
 async function api(path, opts = {}) {
@@ -637,6 +785,18 @@ function insertLineAfter(line) {
   renderCalcView();
 }
 
+// Used by the CAS (d/dx, ∫dx) buttons: drops the symbolic result into a
+// fresh plain Eq line right below the one it was computed from, leaving
+// the original expression untouched.
+function insertLineAfterWithLatex(line, latex) {
+  const idx = currentCalc.data.lines.findIndex((l) => l.id === line.id);
+  const created = newLine('none', { latex });
+  currentCalc.data.lines.splice(idx + 1, 0, created);
+  pendingFocusLineId = created.id;
+  scheduleSave();
+  renderCalcView();
+}
+
 function onEnterInsertsLine(el, line) {
   // Capture phase: math-field handles Enter internally (and stops
   // propagation) before it would ever reach a bubble-phase listener, so we
@@ -735,7 +895,123 @@ function reorderLines(sourceId, targetId) {
   renderCalcView();
 }
 
-// Full editable row: drag handle + role selector + role-specific controls + delete.
+// Inserts a matrix template (\begin{pmatrix}...\end{pmatrix}, zero-filled)
+// into a math-field at the cursor, sized from a quick "rows,cols" prompt.
+// Dispatches a synthetic input event afterward so the field's own existing
+// input listener (already wired per-role in renderEditLine) picks up the
+// change the same way typing would.
+function makeMatrixButton(field) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'matrix-insert-btn';
+  btn.textContent = '⊞';
+  btn.title = 'Insert a matrix';
+  btn.addEventListener('click', async () => {
+    const dims = await askPrompt('Matrix size as rows,cols', '2,2');
+    if (!dims) return;
+    const [rowsStr, colsStr] = dims.split(',');
+    const rows = Math.max(1, Math.min(8, parseInt(rowsStr, 10) || 0));
+    const cols = Math.max(1, Math.min(8, parseInt((colsStr || '').trim(), 10) || 0));
+    if (!rows || !cols) return;
+    const rowLatex = Array(cols).fill('0').join('&');
+    const body = Array(rows).fill(rowLatex).join('\\\\');
+    field.insert(`\\begin{pmatrix}${body}\\end{pmatrix}`);
+    field.focus();
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  return btn;
+}
+
+// Symbolic differentiate/integrate (via nerdamer, vendored in
+// frontend/lib/nerdamer/). Leaves the original line untouched and drops
+// the result into a fresh line right below it - same "insert a line"
+// pattern as pressing Enter. Note: this app's V_2ab4s-style multi-character
+// subscript variable names aren't recognized as single symbols by
+// nerdamer's parser (it splits them into separate implicitly-multiplied
+// tokens the way it would "2ab4s" on its own) - stick to single-letter
+// variable names when using these buttons.
+function makeCasButton(line, field, kind) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'cas-btn';
+  btn.textContent = kind === 'diff' ? 'd/dx' : '∫dx';
+  btn.title = kind === 'diff' ? 'Differentiate (adds a new line below)' : 'Integrate (adds a new line below, no constant of integration)';
+  btn.addEventListener('click', async () => {
+    const ascii = getFieldAscii(field);
+    if (!ascii.trim()) return;
+    const varName = await askPrompt(
+      kind === 'diff' ? 'Differentiate with respect to:' : 'Integrate with respect to:',
+      guessCasVariable(ascii)
+    );
+    if (!varName) return;
+    try {
+      const latex = computeCasResultLatex(ascii, kind, varName.trim());
+      insertLineAfterWithLatex(line, latex);
+    } catch (err) {
+      await askAlert('Could not compute that: ' + err.message);
+    }
+  });
+  return btn;
+}
+
+// Copies a computed result as plain text - meant for pasting into any other
+// app's number entry (TI-Nspire's entry line included), which sidesteps
+// needing to know that app's own math notation/clipboard format at all.
+// getText is read lazily at click time so it always reflects the latest
+// computed value, not whatever it was when the button was created.
+function makeCopyButton(getText, opts = {}) {
+  const icon = opts.icon || '⧉';
+  const idleTitle = opts.title || 'Copy value';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'copy-btn';
+  btn.textContent = icon;
+  btn.title = idleTitle;
+  btn.addEventListener('click', async () => {
+    const text = getText();
+    if (!text) return;
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch {
+      // Clipboard API needs a secure context (https, or http://localhost) -
+      // fall back to the legacy selection-based copy for plain http hosts.
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        copied = document.execCommand('copy');
+      } catch {
+        copied = false;
+      }
+      ta.remove();
+    }
+    const original = btn.textContent;
+    btn.textContent = copied ? '✓' : '✗';
+    btn.title = copied ? idleTitle : 'Copy failed - select and copy manually';
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.title = idleTitle;
+    }, 1000);
+  });
+  return btn;
+}
+
+// Copies the line's underlying equation (not just its computed value) as
+// plain text meant for pasting directly into TI-Nspire's entry line - see
+// toNspireText() above for why this needs its own conversion step rather
+// than reusing the ascii-math text math.js evaluates internally.
+function makeCopyEquationButton(field) {
+  return makeCopyButton(() => toNspireText(getFieldAscii(field)), {
+    icon: '⇄',
+    title: 'Copy equation (for TI-Nspire)',
+  });
+}
+
 function renderEditLine(line) {
   const row = document.createElement('div');
   row.className = 'calc-line role-' + line.role;
@@ -803,10 +1079,15 @@ function renderEditLine(line) {
     onEnterInsertsLine(field, line);
     row.appendChild(field);
     rowState.field = field;
+    row.appendChild(makeMatrixButton(field));
+    row.appendChild(makeCasButton(line, field, 'diff'));
+    row.appendChild(makeCasButton(line, field, 'integrate'));
 
     const resultEl = document.createElement('div');
     resultEl.className = 'line-result';
     row.appendChild(resultEl);
+    row.appendChild(makeCopyButton(() => resultEl.textContent));
+    row.appendChild(makeCopyEquationButton(field));
     rowState.resultEl = resultEl;
   } else {
     const field = document.createElement('math-field');
@@ -819,10 +1100,15 @@ function renderEditLine(line) {
     onEnterInsertsLine(field, line);
     row.appendChild(field);
     rowState.field = field;
+    row.appendChild(makeMatrixButton(field));
+    row.appendChild(makeCasButton(line, field, 'diff'));
+    row.appendChild(makeCasButton(line, field, 'integrate'));
 
     const resultEl = document.createElement('div');
     resultEl.className = 'line-result';
     row.appendChild(resultEl);
+    row.appendChild(makeCopyButton(() => resultEl.textContent));
+    row.appendChild(makeCopyEquationButton(field));
     rowState.resultEl = resultEl;
 
     const hideLabel = document.createElement('label');
@@ -882,10 +1168,14 @@ function renderLockedLine(line) {
     label.textContent = line.label || 'Output';
     item.appendChild(label);
 
+    const valueRow = document.createElement('div');
+    valueRow.className = 'locked-output-value-row';
     const valueEl = document.createElement('div');
     valueEl.className = 'locked-output-value';
     valueEl.textContent = '—';
-    item.appendChild(valueEl);
+    valueRow.appendChild(valueEl);
+    valueRow.appendChild(makeCopyButton(() => valueEl.textContent));
+    item.appendChild(valueRow);
 
     calcLinesEl.appendChild(item);
     return { line, field: null, resultEl: valueEl };
@@ -909,6 +1199,8 @@ function renderLockedLine(line) {
   const resultEl = document.createElement('div');
   resultEl.className = 'line-result';
   row.appendChild(resultEl);
+  row.appendChild(makeCopyButton(() => resultEl.textContent));
+  row.appendChild(makeCopyEquationButton(field));
 
   calcLinesEl.appendChild(row);
   return { line, field, resultEl };

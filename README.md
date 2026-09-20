@@ -13,6 +13,8 @@ math behind one input box and one output.
   - [math.js](https://mathjs.org/) does the actual evaluation, using a
     left-to-right variable scope per calculator (same mental model as Desmos:
     define `a = 5`, then `b = a * 2` on the next line, etc).
+  - [nerdamer](https://nerdamer.com/) does symbolic CAS work (differentiate,
+    integrate) for the `d/dx` / `∫dx` buttons on Eq/Output lines.
 - **Backend**: Python (FastAPI) + SQLite. All folders and calculators are
   stored server-side in `/app/data/calcvault.db` (mounted as `./data` on the
   host) — nothing lives in browser storage.
@@ -58,6 +60,69 @@ for the rest of the session.
 - Subscripted variable names work as multi-character/word subscripts, e.g.
   a variable typed as `V_2ab4s` in an Input line's name field matches the
   same variable referenced as `V_{2ab4s}` in any other line's math-field.
+- Matrices: the **⊞** button next to an Eq/Output field's math-field inserts
+  a matrix template (prompts for rows/cols). Type `\det` (or click the
+  virtual keyboard's det button, if your MathLive build has one) around it
+  to get the determinant, e.g. `\det\begin{pmatrix}2&1\\1&3\end{pmatrix}`
+  evaluates to `5`. Plain matrix arithmetic (addition, multiplication)
+  works too, since it's just math.js underneath.
+
+### CAS: derivatives and integrals
+
+Eq and Output lines have two extra buttons next to the matrix button:
+**d/dx** and **∫dx**. Each asks which variable to use (pre-filled with its
+best guess — the first letter in the expression that isn't a known function
+name), then drops the symbolic result into a fresh line right below,
+leaving the original expression untouched. Both are computed by
+[nerdamer](https://nerdamer.com/), a separate symbolic-algebra engine from
+math.js (which only ever evaluates to a number) — vendored the same way as
+MathLive and math.js.
+
+- Integrals have no constant of integration (`+ C`) added.
+- `log(x)`/`ln(x)` round-trip through this app's base‑10/natural convention
+  correctly (nerdamer's own convention is the opposite, similar to
+  math.js's — the conversion happens automatically in both directions).
+- The `V_2ab4s`-style multi-character subscript variable names described
+  above aren't recognized as a single symbol by nerdamer's parser (it reads
+  `V_2ab4s` as `V_2` times a separate variable `ab4s`) - stick to
+  single-letter variable names (with or without a single-character
+  subscript, e.g. `x_1`) when using these buttons.
+- If nerdamer can't find a closed form, it returns special functions (e.g.
+  `erf`) rather than failing outright; genuinely invalid input shows an
+  error dialog instead of adding a line.
+
+### Copying to/from TI-Nspire
+
+**Values**: every computed result has a small **⧉** copy button next to it
+that copies just the plain number to the clipboard — no notation to
+translate, so it pastes cleanly into any app's number entry, TI-Nspire
+included.
+
+**Pasting an equation from Nspire into this app** already works with no
+special handling: copy an expression off an Nspire (or type it directly into
+a line's math-field) and Ctrl+V it into any Eq/Input/Output field. Nspire's
+clipboard is plain text that writes multiplication as an explicit `*` (e.g.
+copying `14229ab+1` off an Nspire and pasting into a plain text editor
+yields the literal text `14229*ab+1`) but otherwise uses bare juxtaposition
+for implied multiplication between single-letter variables (`ab` meaning
+`a*b`) — MathLive already parses pasted plain text exactly the same way it
+parses typed input, so `ab` becomes two separate variables the same way
+Desmos would read it, and math.js already evaluates the result correctly.
+
+**Copying an equation from this app for Nspire**: the **⇄** button next to
+a line's value-copy button (on Eq lines, and on Output lines) copies the
+underlying equation as plain text formatted for Nspire's entry line —
+every multiplication written out as an explicit `*` (since we can't be sure
+Nspire's parser accepts bare juxtaposition of an arbitrary/multi-character
+variable name the way math.js does), `log()`/`ln()` left alone (Nspire uses
+the same base‑10/natural convention this app does), and everything else
+passed through as-is. This has **not been verified against real Nspire
+hardware** — if a copied equation doesn't paste cleanly, the most useful
+thing to report back is the exact text produced by both directions (what
+`⇄` copies, and what pasting Nspire's own clipboard into a plain text
+editor produces) so the conversion in `frontend/app.js`'s `toNspireText`
+can be corrected. Matrices are out of scope for this converter — Nspire's
+matrix literal syntax hasn't been verified at all.
 
 ## Running it locally without Docker (for quick testing)
 
@@ -79,7 +144,7 @@ python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 
 ### Vendoring the frontend libs without Node/npm
 
-If you don't have Node installed, you can fetch the two required libraries
+If you don't have Node installed, you can fetch the three required libraries
 directly from the npm registry without `npm`:
 
 ```bash
@@ -89,6 +154,9 @@ curl -sL <tarball-url> -o mathlive.tgz && tar xzf mathlive.tgz
 cp -r package/*.mjs package/*.js package/fonts frontend/lib/mathlive/
 # same idea for mathjs, but its browser bundle lives at lib/browser/math.js
 # inside the tarball, not dist/ — copy that file to frontend/lib/mathjs.min.js
+# nerdamer ships its whole bundle (core + Calculus + Solve, etc) as one
+# pre-built file at the package root, all.min.js - copy that straight to
+# frontend/lib/nerdamer/nerdamer.all.min.js
 ```
 
 Then create `frontend/lib/import-map.json`:
