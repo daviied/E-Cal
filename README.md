@@ -57,6 +57,13 @@ for the rest of the session.
   Desmos convention. (The underlying math.js library defaults the other
   way: `log(x)` natural, no `ln` at all - overridden here on purpose.)
 - `|x|` (absolute value bars) works as expected.
+- **Piecewise functions**: there's no dedicated piecewise UI - type a
+  condition as a ternary, e.g. `x \geq 0 ? x^2 : -x` (type `>=`/`<=`/`!=` or
+  use the virtual keyboard's ≥/≤/≠ - both work). Nest ternaries for more
+  than two branches: `x<0 ? -1 : (x==0 ? 0 : 1)`. MathLive's own
+  `\begin{cases}...\end{cases}` notation renders prettily but doesn't
+  evaluate - math.js has no notion of it - so stick to the ternary form for
+  anything meant to compute.
 - Subscripted variable names work as multi-character/word subscripts, e.g.
   a variable typed as `V_2ab4s` in an Input line's name field matches the
   same variable referenced as `V_{2ab4s}` in any other line's math-field.
@@ -123,6 +130,32 @@ thing to report back is the exact text produced by both directions (what
 editor produces) so the conversion in `frontend/app.js`'s `toNspireText`
 can be corrected. Matrices are out of scope for this converter — Nspire's
 matrix literal syntax hasn't been verified at all.
+
+## Installing as an app on a phone/tablet (PWA)
+
+CalcVault ships a web app manifest, icons, and a small service worker, so
+Chrome on Android can install it to the home screen as a standalone,
+full-screen app (menu → **Install app** / **Add to Home screen**).
+
+**It must be served over HTTPS** for the install prompt (and the service
+worker) to work - browsers refuse both on plain `http://` LAN addresses like
+`http://192.168.1.50:8000` (only `localhost` is exempt). Put it behind a
+reverse proxy that does TLS (see "Running it locally with Docker") and set
+`HTTPS_ONLY=true`. Over plain http, "Add to Home screen" still makes a
+bookmark-style shortcut, but it opens in a normal browser tab rather than as
+an installed app.
+
+The service worker is network-first (never cache-first), so a redeploy is
+picked up immediately, and it never touches `/api/*` - the app still needs a
+connection to your server to load or save calculators.
+
+On phone-width screens (≤760px) the sidebar becomes a slide-out drawer
+(☰ to open, closes itself when you pick a calculator) and each line wraps so
+the equation gets its own full-width row. On wider screens the sidebar can be
+hidden with **«** and brought back with ☰; that choice is remembered per
+device. Drag-to-reorder lines/folders uses desktop-style drag and drop, which
+touch browsers don't support, so reordering is a desktop/mouse feature for
+now.
 
 ## Running it locally without Docker (for quick testing)
 

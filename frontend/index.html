@@ -2,7 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#14161a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="CalcVault">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <title>CalcVault</title>
 <link rel="stylesheet" href="/style.css">
 <script src="/lib/mathjs.min.js"></script>
@@ -26,7 +34,10 @@
   <aside id="sidebar">
     <div id="sidebar-header">
       <h1>CalcVault</h1>
-      <button id="btn-logout" title="Log out">Log out</button>
+      <div class="sidebar-header-buttons">
+        <button id="btn-logout" title="Log out">Log out</button>
+        <button id="btn-sidebar-close" class="icon-btn" title="Hide sidebar" aria-label="Hide sidebar">&#171;</button>
+      </div>
     </div>
     <div id="sidebar-actions">
       <button id="btn-new-folder">+ Folder</button>
@@ -34,8 +45,10 @@
     </div>
     <div id="tree"></div>
   </aside>
+  <div id="sidebar-backdrop"></div>
 
   <main id="main">
+    <button id="btn-sidebar-open" class="icon-btn" title="Show sidebar" aria-label="Show sidebar">&#9776;</button>
     <div id="empty-state">
       <p>Select a calculator from the sidebar, or create a new one.</p>
     </div>

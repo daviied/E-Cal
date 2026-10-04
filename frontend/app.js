@@ -78,7 +78,12 @@ function normalizeOperators(ascii) {
     .replace(/∗|×|·/g, '*') // ∗, ×, · (middle dot - some apps' clipboard multiplication sign)
     .replace(/\s*-:\s*/g, '/') // \div
     .replace(/÷/g, '/') // ÷
-    .replace(/−/g, '-'); // unicode minus sign
+    .replace(/−/g, '-') // unicode minus sign
+    .replace(/≥/g, '>=')
+    .replace(/≤/g, '<=')
+    .replace(/≠/g, '!='); // MathLive exports \geq/\leq/\neq as these unicode
+    // symbols in ascii-math, but math.js's parser only accepts the ASCII
+    // forms - needed for piecewise-style conditions (x>=0 ? a : b).
 }
 function postProcessAscii(ascii) {
   return normalizeOperators(convertMatrixParens(convertAbsBars(cleanSubscripts(ascii))));
@@ -320,6 +325,39 @@ let saveTimer = null;
 // ---------- auth ----------
 const loginOverlay = document.getElementById('login-overlay');
 const appRoot = document.getElementById('app');
+
+// ---------- collapsible sidebar ----------
+// Desktop: the sidebar can be hidden/shown, remembered per-device. Phone-width
+// screens: it becomes an off-canvas drawer that starts closed and closes
+// itself when a calculator is picked.
+const MOBILE_QUERY = window.matchMedia('(max-width: 760px)');
+const SIDEBAR_PREF_KEY = 'calcvault.sidebarCollapsed';
+
+function setSidebarCollapsed(collapsed, { persist = true } = {}) {
+  appRoot.classList.toggle('sidebar-collapsed', collapsed);
+  if (persist && !MOBILE_QUERY.matches) {
+    try {
+      localStorage.setItem(SIDEBAR_PREF_KEY, collapsed ? '1' : '0');
+    } catch {
+      // storage unavailable (private mode etc.) - preference just won't stick
+    }
+  }
+}
+function applyInitialSidebarState() {
+  let collapsed = MOBILE_QUERY.matches;
+  if (!collapsed) {
+    try {
+      collapsed = localStorage.getItem(SIDEBAR_PREF_KEY) === '1';
+    } catch {
+      collapsed = false;
+    }
+  }
+  setSidebarCollapsed(collapsed, { persist: false });
+}
+document.getElementById('btn-sidebar-close').addEventListener('click', () => setSidebarCollapsed(true));
+document.getElementById('btn-sidebar-open').addEventListener('click', () => setSidebarCollapsed(false));
+document.getElementById('sidebar-backdrop').addEventListener('click', () => setSidebarCollapsed(true));
+MOBILE_QUERY.addEventListener('change', applyInitialSidebarState);
 
 function showLogin() {
   loginOverlay.hidden = false;
@@ -664,6 +702,7 @@ function normalizeCalcData(data) {
 }
 
 async function selectCalculator(id) {
+  if (MOBILE_QUERY.matches) setSidebarCollapsed(true, { persist: false });
   currentCalc = await apiGet(`/api/calculators/${id}`);
   currentCalc.data = normalizeCalcData(currentCalc.data);
   selected = { id };
@@ -1261,6 +1300,16 @@ function computeAll() {
       }
     }
   }
+}
+
+applyInitialSidebarState();
+
+// Registering a service worker (together with /manifest.json) is what makes
+// the app installable. Browsers only allow this over HTTPS or localhost.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
 }
 
 init();

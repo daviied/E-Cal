@@ -111,6 +111,7 @@ button.primary {
 #app {
   display: flex;
   height: 100vh;
+  height: 100dvh;
 }
 
 #sidebar {
@@ -463,4 +464,199 @@ math-field {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   color: var(--text);
+}
+
+/* --- collapsible sidebar --- */
+.icon-btn {
+  padding: 4px 9px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.sidebar-header-buttons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#btn-sidebar-open {
+  display: none;
+  margin-bottom: 14px;
+}
+
+#sidebar-backdrop {
+  display: none;
+}
+
+#app.sidebar-collapsed #sidebar {
+  display: none;
+}
+
+#app.sidebar-collapsed #btn-sidebar-open {
+  display: inline-block;
+}
+
+/* Touch screens have no hover, so the folder/calculator row buttons
+   (normally revealed on hover) would be unreachable - always show them. */
+@media (hover: none) {
+  .tree-row-actions {
+    display: flex;
+  }
+  .tree-row-actions button {
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+}
+
+/* --- phone layout: sidebar becomes an off-canvas drawer --- */
+@media (max-width: 760px) {
+  html, body {
+    font-size: 15px;
+  }
+
+  /* 16px inputs stop mobile browsers zooming the page on focus */
+  button, input, select {
+    font-size: 16px;
+    min-height: 40px;
+  }
+
+  #sidebar,
+  #app.sidebar-collapsed #sidebar {
+    display: flex;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(85vw, 320px);
+    z-index: 30;
+    padding-top: env(safe-area-inset-top);
+    padding-left: env(safe-area-inset-left);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
+    transition: transform 0.2s ease, visibility 0s linear 0s;
+  }
+
+  #app.sidebar-collapsed #sidebar {
+    transform: translateX(-105%);
+    visibility: hidden;
+    box-shadow: none;
+    transition: transform 0.2s ease, visibility 0s linear 0.2s;
+  }
+
+  #sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 25;
+    background: rgba(0, 0, 0, 0.55);
+  }
+
+  #app.sidebar-collapsed #sidebar-backdrop {
+    display: none;
+  }
+
+  #btn-sidebar-open,
+  #app.sidebar-collapsed #btn-sidebar-open {
+    display: inline-block;
+    min-width: 44px;
+  }
+
+  #main {
+    padding: calc(12px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 12px calc(12px + env(safe-area-inset-left));
+  }
+
+  #empty-state {
+    margin-top: 40px;
+  }
+
+  /* leave room under the last line for MathLive's on-screen keyboard */
+  #calc-view {
+    padding-bottom: 40vh;
+  }
+
+  .view-header {
+    flex-wrap: wrap;
+  }
+
+  .name-input {
+    flex: 1 1 100%;
+    font-size: 17px;
+  }
+
+  .view-header select {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  /* each line wraps: the math-field gets a full-width row of its own,
+     with the role picker/buttons/result flowing below or above it */
+  .calc-line {
+    flex-wrap: wrap;
+    gap: 6px 8px;
+  }
+
+  .calc-line math-field {
+    flex: 1 1 100%;
+    min-width: 100%;
+    font-size: 18px;
+  }
+
+  .calc-line .role-var-input {
+    width: 70px;
+  }
+
+  .calc-line .role-label-input {
+    flex: 1 1 100px;
+    width: auto;
+    min-width: 0;
+  }
+
+  .calc-line .line-result {
+    margin-left: auto;
+    min-width: 0;
+    font-size: 15px;
+  }
+
+  /* first row: grip, role picker, delete - everything else flows below */
+  .calc-line > * {
+    order: 3;
+  }
+
+  .calc-line > .drag-handle {
+    order: 0;
+  }
+
+  .calc-line > .role-select {
+    order: 1;
+  }
+
+  .calc-line > .line-actions {
+    order: 2;
+    margin-left: auto;
+  }
+
+  /* zero-height full-width item: forces everything after it onto a new row */
+  .calc-line::after {
+    content: '';
+    order: 2;
+    flex: 1 0 100%;
+    height: 0;
+  }
+
+  .locked-plain-line {
+    flex-wrap: wrap;
+  }
+
+  .locked-plain-line math-field {
+    flex: 1 1 100%;
+    min-width: 100%;
+    font-size: 18px;
+  }
+
+  .locked-plain-line .line-result {
+    margin-left: auto;
+  }
+
+  .modal-box {
+    width: min(320px, 90vw);
+  }
 }
