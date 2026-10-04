@@ -3,7 +3,7 @@
 # like d/dx and integration). Only needed at build time.
 FROM node:20-alpine AS assets
 WORKDIR /assets
-RUN npm init -y >/dev/null 2>&1 && npm install mathlive mathjs nerdamer
+RUN npm init -y >/dev/null 2>&1 && npm install mathlive mathjs nerdamer@1.1.13
 COPY build/generate-importmap.js ./generate-importmap.js
 RUN node generate-importmap.js
 RUN mkdir -p /out/mathlive /out/nerdamer && \
