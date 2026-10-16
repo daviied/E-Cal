@@ -1,0 +1,15 @@
+// Probe 11: does a backslash inside a string stop EXPR from reading a list?
+
+EXPORT CVPROBE()
+BEGIN
+  LOCAL q, s, v;
+  PRINT();
+  q := CHAR(34);
+  s := "{" + q + "a" + CHAR(92) + "frac12" + q + "," + q + "b" + q + "}";
+  PRINT("text: " + s);
+  IFERR v := EXPR(s); THEN PRINT("EXPR ERR"); ELSE PRINT("EXPR ok, size " + SIZE(v) + " first=" + v(1)); END;
+  s := "{" + q + "a" + CHAR(92) + q + "," + q + "b" + q + "}";
+  PRINT("text: " + s);
+  IFERR v := EXPR(s); THEN PRINT("EXPR ERR"); ELSE PRINT("EXPR ok, size " + SIZE(v)); END;
+  WAIT(-1);
+END;

@@ -149,13 +149,78 @@ The service worker is network-first (never cache-first), so a redeploy is
 picked up immediately, and it never touches `/api/*` - the app still needs a
 connection to your server to load or save calculators.
 
-On phone-width screens (≤760px) the sidebar becomes a slide-out drawer
+On phone-width screens (≤760px) the app switches to a handheld-calculator
+layout, modeled loosely on the HP Prime G2: a dark body, a light "screen"
+showing the calculator's lines under a blue title bar, and an on-screen
+keypad docked at the bottom that replaces both MathLive's own keyboard and
+the OS keyboard. Keys type into whichever line you last tapped:
+**SHIFT** (blue) one-shots the small blue label above a key (sin⁻¹, eˣ, 10ˣ,
+√ ↔ π, ≥ ≤ ≠ < > ? : _ =, a/b fraction, |x|, CLEAR…); **ALPHA** (orange)
+swaps in a letters layer for variable names (one-shot; tap twice to lock,
+**123** to return); **▲/▼** move between lines, and SHIFT+▲/▼ run the d/dx
+and ∫dx CAS actions on the current line; **ENTER** adds a new line below,
+like pressing Enter on desktop. The **⌨** button in the title bar switches to your phone's normal keyboard
+for equation fields (hiding the keypad until you tap it again); an Input
+line's variable-name and label boxes always use the normal keyboard. The ⋯
+button in the title bar reveals the
+move-to-folder and delete controls. The sidebar becomes a slide-out drawer
 (☰ to open, closes itself when you pick a calculator) and each line wraps so
 the equation gets its own full-width row. On wider screens the sidebar can be
 hidden with **«** and brought back with ☰; that choice is remembered per
 device. Drag-to-reorder lines/folders uses desktop-style drag and drop, which
 touch browsers don't support, so reordering is a desktop/mouse feature for
 now.
+
+## Syncing with an HP Prime G2 from the web page
+
+The **HP Prime** button in the sidebar opens a panel that connects a G2 and
+syncs it with this app: the same two-way merge as the PC tool in
+`hpprime/` (see `hpprime/README.md` for the calculator app itself and for how
+folders, lines, conflicts and deletions are handled), but run from the web
+page, with nothing to install on the PC.
+
+How it works: the calculator's USB cable goes into the computer the
+**browser** is running on. The page talks to the calculator directly with
+WebHID (`frontend/hp.js`, a JavaScript port of the USB layer in
+`hpprime/sync/cvsync/primelink.py`), while the merge runs on the server
+(`backend/app/hp.py` → `hpprime/sync/cvsync/webrun.py`), which asks the page
+over a WebSocket to read or write one note at a time. Nothing about your
+calculators is sent anywhere except between your browser and your own server.
+
+To use it: plug the calculator in, turn it on, leave it on its Home screen
+with CalcVault closed, close HP's Connectivity Kit, then in the panel press
+**Connect calculator** (pick the HP Prime in the browser's chooser, once) and
+**Sync now**. A sync that would delete something or resolve a conflict shows
+what it will do and asks first. **Auto-sync** repeats a sync every few
+seconds and does *not* ask (like the PC tool's live mode); it needs CalcVault
+closed on the calculator to see calculator-side changes.
+
+Requirements and limits:
+
+- A browser with WebHID: **Chrome or Edge on a computer** (Windows, macOS,
+  Linux, ChromeOS). Not Firefox, not Safari, and **not Android or iOS** - on a
+  phone or tablet the panel just says so. (Use the web app there as usual and
+  sync with a computer.)
+- The page must be served over **HTTPS** (or be `localhost`); browsers refuse
+  USB access to plain `http://` pages.
+- Like the PC tool, the sync's merge state and backups (the last 30 of each)
+  are kept on the server, in a `hpsync/` folder next to the database (so on
+  the Docker data volume). Use **either** this panel **or** the PC tool for a
+  given calculator: each keeps its own record of what was last synced, so
+  alternating between them makes it report changes as conflicts (nothing is
+  lost - the calculator's version is kept as a "(calculator copy)").
+- The Docker image includes the sync code from `hpprime/sync/cvsync`; if you
+  build a stripped-down image without that folder, the panel says the server
+  cannot sync (the rest of the app is unaffected).
+- **How sure is this:** the server half is tested end to end with a simulated
+  calculator, and the page's USB code is checked byte for byte against the
+  Python implementation (checksums, messages, note encoding, report framing)
+  and run against a simulated G2 through the real panel (connect, sync both
+  ways, confirm, cancel, auto-sync). It has **not been tried on a physical
+  G2** - the PC tool's USB layer it is ported from hasn't either, and WebHID
+  adds one more unknown: whether Chrome lists the G2 in its device chooser
+  (it hides devices that look like keyboards or mice). If it doesn't appear,
+  or a sync fails, the PC tool remains the fallback.
 
 ## Running it locally without Docker (for quick testing)
 

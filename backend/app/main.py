@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import db
+from . import db, hp
 
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
 SESSION_SECRET = os.environ.get("SESSION_SECRET")
@@ -178,6 +178,7 @@ def delete_calculator(calc_id: int):
 
 app.include_router(auth_router)
 app.include_router(api)
+app.include_router(hp.router)
 
 
 def _file_hash(path: str) -> str:
@@ -200,9 +201,10 @@ def index():
     html_path = os.path.join(FRONTEND_DIR, "index.html")
     with open(html_path, "r", encoding="utf-8") as f:
         html = f.read()
-    app_js_hash = _file_hash(os.path.join(FRONTEND_DIR, "app.js"))
+    for name in ("app.js", "hp.js"):
+        h = _file_hash(os.path.join(FRONTEND_DIR, name))
+        html = html.replace(f'src="/{name}"', f'src="/{name}?v={h}"')
     style_css_hash = _file_hash(os.path.join(FRONTEND_DIR, "style.css"))
-    html = html.replace('src="/app.js"', f'src="/app.js?v={app_js_hash}"')
     html = html.replace('href="/style.css"', f'href="/style.css?v={style_css_hash}"')
     return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 

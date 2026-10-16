@@ -25,6 +25,9 @@ RUN pip install --no-cache-dir -r backend/requirements.txt
 
 COPY backend ./backend
 COPY frontend ./frontend
+# The HP Prime sync tool's merge logic (pure Python, no extra packages); the
+# web app's /api/hp/ws runs it. Path matches backend/app/hp.py's default.
+COPY hpprime/sync/cvsync ./hpprime/sync/cvsync
 COPY --from=assets /out ./frontend/lib
 
 # index.html hardcodes a default mathlive entry path for local/dev use;
