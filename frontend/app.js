@@ -81,6 +81,7 @@ function normalizeOperators(ascii) {
     .replace(/−/g, '-') // unicode minus sign
     .replace(/≥/g, '>=')
     .replace(/≤/g, '<=')
+    .replace(/\barc(sin|cos|tan)\b/g, 'a$1') // \arcsin etc -> math.js's asin/acos/atan
     .replace(/≠/g, '!='); // MathLive exports \geq/\leq/\neq as these unicode
     // symbols in ascii-math, but math.js's parser only accepts the ASCII
     // forms - needed for piecewise-style conditions (x>=0 ? a : b).
@@ -355,7 +356,9 @@ function applyInitialSidebarState() {
   setSidebarCollapsed(collapsed, { persist: false });
 }
 document.getElementById('btn-sidebar-close').addEventListener('click', () => setSidebarCollapsed(true));
-document.getElementById('btn-sidebar-open').addEventListener('click', () => setSidebarCollapsed(false));
+document.querySelectorAll('[data-sidebar-open]').forEach((btn) => {
+  btn.addEventListener('click', () => setSidebarCollapsed(false));
+});
 document.getElementById('sidebar-backdrop').addEventListener('click', () => setSidebarCollapsed(true));
 MOBILE_QUERY.addEventListener('change', applyInitialSidebarState);
 
@@ -802,11 +805,13 @@ function renderCalcView() {
     ? currentCalc.data.lines.map(renderLockedLine)
     : currentCalc.data.lines.map(renderEditLine);
   computeAll();
+  if (systemKeyboard) calcLineRows.forEach((r) => setFieldInputMode(r.field));
 
   if (pendingFocusLineId) {
     const target = calcLineRows.find((r) => r.line.id === pendingFocusLineId);
     pendingFocusLineId = null;
     if (target && target.field) {
+      activeLineId = target.line.id;
       requestAnimationFrame(() => target.field.focus());
     }
   }
@@ -1051,6 +1056,15 @@ function makeCopyEquationButton(field) {
   });
 }
 
+// Every math-field in a calculator line comes from here. On phone-width
+// screens the on-screen calculator keypad (below) takes over from MathLive's
+// own virtual keyboard, so that one is switched to manual (never auto-shown).
+function createCalcField() {
+  const field = document.createElement('math-field');
+  if (MOBILE_QUERY.matches) field.mathVirtualKeyboardPolicy = 'manual';
+  return field;
+}
+
 function renderEditLine(line) {
   const row = document.createElement('div');
   row.className = 'calc-line role-' + line.role;
@@ -1093,7 +1107,7 @@ function renderEditLine(line) {
     onEnterInsertsLine(labelInput, line);
     row.appendChild(labelInput);
 
-    const field = document.createElement('math-field');
+    const field = createCalcField();
     setFieldLatex(field, line.value);
     field.addEventListener('input', () => {
       line.value = getFieldLatex(field);
@@ -1108,7 +1122,7 @@ function renderEditLine(line) {
     onEnterInsertsLine(labelInput, line);
     row.appendChild(labelInput);
 
-    const field = document.createElement('math-field');
+    const field = createCalcField();
     setFieldLatex(field, line.expr);
     field.addEventListener('input', () => {
       line.expr = getFieldLatex(field);
@@ -1129,7 +1143,7 @@ function renderEditLine(line) {
     row.appendChild(makeCopyEquationButton(field));
     rowState.resultEl = resultEl;
   } else {
-    const field = document.createElement('math-field');
+    const field = createCalcField();
     setFieldLatex(field, line.latex);
     field.addEventListener('input', () => {
       line.latex = getFieldLatex(field);
@@ -1186,7 +1200,7 @@ function renderLockedLine(line) {
     label.textContent = line.label || line.varName || 'Input';
     item.appendChild(label);
 
-    const field = document.createElement('math-field');
+    const field = createCalcField();
     setFieldLatex(field, line.value);
     field.addEventListener('input', () => {
       line.value = getFieldLatex(field);
@@ -1226,7 +1240,7 @@ function renderLockedLine(line) {
 
   const row = document.createElement('div');
   row.className = 'locked-plain-line';
-  const field = document.createElement('math-field');
+  const field = createCalcField();
   setFieldLatex(field, line.latex);
   field.addEventListener('input', () => {
     line.latex = getFieldLatex(field);
@@ -1301,6 +1315,292 @@ function computeAll() {
     }
   }
 }
+
+// ---------- calculator-style keypad (phone layout) ----------
+// On phone-width screens the calculator is laid out like a handheld (HP Prime
+// style): the lines are the "screen", and this on-screen keypad replaces both
+// MathLive's own virtual keyboard and the OS keyboard. Keys drive whichever
+// math-field was focused last, via MathLive's own typing/command API, so
+// results go through exactly the same path as real keystrokes.
+const keypadEl = document.getElementById('keypad');
+const keypadState = { shift: false, alpha: false, alphaLock: false };
+let activeLineId = null;
+
+// Remember which line the user is working in. Tracked from focus *and* from
+// taps (capture phase), since the keypad's own taps must never be what
+// decides this, and focus events alone aren't reliable everywhere.
+function noteActiveLine(target) {
+  const field = target && target.closest ? target.closest('math-field') : null;
+  const row = field && calcLineRows.find((r) => r.field === field);
+  if (row) {
+    activeLineId = row.line.id;
+    setFieldInputMode(field);
+  }
+}
+
+// Optional "use the phone's own keyboard" mode. MathLive hard-codes
+// inputmode=none on each field's hidden input (so no OS keyboard appears);
+// flipping that attribute to text brings the normal keyboard up instead,
+// and the keypad is hidden while it's on.
+let systemKeyboard = false;
+function setFieldInputMode(field) {
+  const sink = field && field.shadowRoot && field.shadowRoot.querySelector('.ML__keyboard-sink');
+  if (sink) sink.setAttribute('inputmode', systemKeyboard ? 'text' : 'none');
+}
+document.getElementById('calc-kbd').addEventListener('click', () => {
+  systemKeyboard = !systemKeyboard;
+  document.getElementById('main').classList.toggle('system-keyboard', systemKeyboard);
+  document.getElementById('calc-kbd').classList.toggle('active', systemKeyboard);
+  for (const r of calcLineRows) setFieldInputMode(r.field);
+  const row = activeKeypadRow();
+  if (row) {
+    try {
+      row.field.blur();
+    } catch {
+      // see safeFocus
+    }
+    safeFocus(row.field);
+  }
+});
+calcLinesEl.addEventListener('focusin', (e) => noteActiveLine(e.target));
+calcLinesEl.addEventListener('pointerdown', (e) => noteActiveLine(e.target), true);
+
+function activeKeypadRow() {
+  const byId = calcLineRows.find((r) => r.field && r.line.id === activeLineId);
+  if (byId) return byId;
+  const editable = calcLineRows.filter((r) => r.field);
+  return editable[editable.length - 1] || null;
+}
+
+const T = (text) => ({ text });
+const L = (latex) => ({ latex });
+const C = (cmd) => ({ cmd });
+// A named function: the real \sin-style command (typing the letters would be
+// read as a product of variables), then an opening paren.
+const FN = (name) => [L('\\' + name), T('(')];
+
+// A key: main label, action, optional shifted label + action, style class.
+function key(label, action, shiftLabel = '', shiftAction = null, cls = '', span = 1) {
+  return { label, action, shiftLabel, shiftAction, cls, span };
+}
+const digit = (d, shiftLabel = '', shiftAction = null) => key(d, [T(d)], shiftLabel, shiftAction, 'k-num');
+
+const KEYPAD_MAIN = [
+  [
+    { id: 'shift', label: 'SHIFT', cls: 'k-shift-key' },
+    { id: 'alpha', label: 'ALPHA', cls: 'k-alpha-key' },
+    key('◀', [C('moveToPreviousChar')], '', null, 'k-nav'),
+    key('▶', [C('moveToNextChar')], '', null, 'k-nav'),
+    { id: 'del', label: 'DEL', shiftLabel: 'CLEAR', cls: 'k-del' },
+  ],
+  [
+    key('sin', FN('sin'), 'sin⁻¹', FN('arcsin')),
+    key('cos', FN('cos'), 'cos⁻¹', FN('arccos')),
+    key('tan', FN('tan'), 'tan⁻¹', FN('arctan')),
+    key('ln', FN('ln'), 'eˣ', [L('e^{#?}')]),
+    key('log', FN('log'), '10ˣ', [L('10^{#?}')]),
+  ],
+  [
+    key('x', [T('x')], 'y', [T('y')]),
+    key('x²', [T('^'), T('2'), C('moveToNextChar')], 'x⁻¹', [T('^'), T('-1'), C('moveToNextChar')]),
+    key('^', [T('^')], '|x|', [L('\\left|#?\\right|')]),
+    key('√', [L('\\sqrt{#?}')], 'π', [L('\\pi')]),
+    key('(', [T('(')], '<', [T('<')]),
+  ],
+  [
+    digit('7', '≥', [L('\\geq')]),
+    digit('8', '≤', [L('\\leq')]),
+    digit('9', '≠', [L('\\neq')]),
+    key(')', [T(')')], '>', [T('>')], 'k-op'),
+    key('÷', [L('\\div')], 'a/b', [L('\\frac{#?}{#?}')], 'k-op'),
+  ],
+  [
+    digit('4', '?', [T('?')]),
+    digit('5', ':', [T(':')]),
+    digit('6', '_', [T('_')]),
+    key('×', [L('\\cdot')], 'e', [T('e')], 'k-op'),
+    key('−', [T('-')], '=', [T('=')], 'k-op'),
+  ],
+  [
+    digit('1'),
+    digit('2'),
+    digit('3'),
+    key('+', [T('+')], '', null, 'k-op'),
+    { id: 'enter', label: 'ENTER', cls: 'k-enter', span: 1, rows: 2 },
+  ],
+  [
+    digit('0', '', null),
+    key('.', [T('.')], ',', [T(',')], 'k-num'),
+    { id: 'up', label: '▲', shiftLabel: 'd/dx', cls: 'k-nav' },
+    { id: 'down', label: '▼', shiftLabel: '∫dx', cls: 'k-nav' },
+  ],
+];
+
+const ALPHA_LETTERS = 'abcdefghijklmnopqrstuvwxyz'.split('');
+function alphaRows() {
+  const upper = keypadState.shift;
+  const ch = (c) => (upper ? c.toUpperCase() : c);
+  const letterKey = (c) => key(ch(c), [T(ch(c))], '', null, 'k-letter');
+  const rows = [KEYPAD_MAIN[0]];
+  for (let i = 0; i < 25; i += 5) rows.push(ALPHA_LETTERS.slice(i, i + 5).map(letterKey));
+  rows.push([
+    letterKey('z'),
+    key('_', [T('_')], '', null, 'k-letter'),
+    key(',', [T(',')], '', null, 'k-letter'),
+    { id: 'back-to-main', label: '123', cls: 'k-nav' },
+    { id: 'enter', label: 'ENTER', cls: 'k-enter' },
+  ]);
+  return rows;
+}
+
+// MathLive can throw from focus() when the previously focused field was
+// just removed by a re-render (it tries to read that dead field's value as
+// it blurs). The new field still ends up focused, so swallowing is safe.
+function safeFocus(field) {
+  try {
+    field.focus();
+  } catch {
+    // see above
+  }
+}
+
+function runKeyActions(actions) {
+  const row = activeKeypadRow();
+  if (!row) return;
+  const field = row.field;
+  safeFocus(field);
+  for (const step of actions) {
+    if (step.text !== undefined) field.executeCommand(['typedText', step.text]);
+    else if (step.latex !== undefined) field.insert(step.latex, { format: 'latex' });
+    else if (step.cmd) field.executeCommand(step.cmd);
+  }
+  field.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function moveToNeighborLine(delta) {
+  const editable = calcLineRows.filter((r) => r.field);
+  const row = activeKeypadRow();
+  const idx = editable.indexOf(row);
+  const target = editable[idx + delta];
+  if (target) {
+    activeLineId = target.line.id;
+    safeFocus(target.field);
+  }
+}
+
+function pressCas(which) {
+  const row = activeKeypadRow();
+  const btns = row && row.field.closest('.calc-line')?.querySelectorAll('.cas-btn');
+  if (btns && btns[which]) btns[which].click();
+}
+
+function pressSpecialKey(id) {
+  const row = activeKeypadRow();
+  switch (id) {
+    case 'del':
+      if (!row) return;
+      if (keypadState.shift) {
+        row.field.setValue('', { format: 'latex' });
+        row.field.dispatchEvent(new Event('input', { bubbles: true }));
+        safeFocus(row.field);
+      } else {
+        runKeyActions([C('deleteBackward')]);
+      }
+      break;
+    case 'enter':
+      if (row) insertLineAfter(row.line);
+      break;
+    case 'up':
+      if (keypadState.shift) pressCas(0);
+      else moveToNeighborLine(-1);
+      break;
+    case 'down':
+      if (keypadState.shift) pressCas(1);
+      else moveToNeighborLine(1);
+      break;
+    case 'back-to-main':
+      keypadState.alpha = false;
+      keypadState.alphaLock = false;
+      break;
+    default:
+  }
+}
+
+function renderKeypad() {
+  const rows = keypadState.alpha ? alphaRows() : KEYPAD_MAIN;
+  keypadEl.innerHTML = '';
+  keypadEl.classList.toggle('keypad-alpha', keypadState.alpha);
+  keypadEl.classList.toggle('keypad-shift', keypadState.shift);
+  rows.forEach((rowKeys, r) => {
+    rowKeys.forEach((k, c) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'kp-key ' + (k.cls || '');
+      if (k.span > 1) btn.style.gridColumn = `span ${k.span}`;
+      if (k.rows > 1) {
+        btn.style.gridRow = `${r + 1} / span ${k.rows}`;
+        btn.style.gridColumn = String(c + 1);
+      }
+      const sub = document.createElement('span');
+      sub.className = 'kp-sub';
+      sub.textContent = k.shiftLabel || '';
+      const main = document.createElement('span');
+      main.className = 'kp-main';
+      main.textContent = k.label;
+      btn.append(sub, main);
+
+      if (k.id === 'shift') btn.classList.toggle('active', keypadState.shift);
+      if (k.id === 'alpha') {
+        btn.classList.toggle('active', keypadState.alpha);
+        btn.classList.toggle('locked', keypadState.alphaLock);
+      }
+
+      // Keep the math-field focused: don't let the tap steal focus.
+      btn.addEventListener('pointerdown', (e) => e.preventDefault());
+      btn.addEventListener('mousedown', (e) => e.preventDefault());
+      btn.addEventListener('click', () => pressKeypadKey(k));
+      keypadEl.appendChild(btn);
+    });
+  });
+}
+
+function pressKeypadKey(k) {
+  if (k.id === 'shift') {
+    keypadState.shift = !keypadState.shift;
+    renderKeypad();
+    return;
+  }
+  if (k.id === 'alpha') {
+    if (!keypadState.alpha) {
+      keypadState.alpha = true;
+    } else if (!keypadState.alphaLock) {
+      keypadState.alphaLock = true; // second tap while on = lock
+    } else {
+      keypadState.alpha = false;
+      keypadState.alphaLock = false;
+    }
+    renderKeypad();
+    return;
+  }
+
+  if (k.id) {
+    pressSpecialKey(k.id);
+  } else {
+    const actions = keypadState.shift && k.shiftAction ? k.shiftAction : k.action;
+    runKeyActions(actions);
+  }
+
+  const wasAlphaLetter = keypadState.alpha && k.cls === 'k-letter';
+  keypadState.shift = false;
+  if (wasAlphaLetter && !keypadState.alphaLock) keypadState.alpha = false;
+  renderKeypad();
+}
+
+renderKeypad();
+
+document.getElementById('calc-more').addEventListener('click', () => {
+  document.querySelector('.view-header').classList.toggle('show-more');
+});
 
 applyInitialSidebarState();
 

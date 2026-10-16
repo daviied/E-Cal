@@ -48,21 +48,30 @@
   <div id="sidebar-backdrop"></div>
 
   <main id="main">
-    <button id="btn-sidebar-open" class="icon-btn" title="Show sidebar" aria-label="Show sidebar">&#9776;</button>
     <div id="empty-state">
+      <button class="icon-btn" data-sidebar-open title="Show sidebar" aria-label="Show sidebar">&#9776;</button>
       <p>Select a calculator from the sidebar, or create a new one.</p>
     </div>
 
     <div id="calc-view" class="view" hidden>
       <div class="view-header">
+        <button class="icon-btn" data-sidebar-open title="Show sidebar" aria-label="Show sidebar">&#9776;</button>
         <input type="text" id="calc-name" class="name-input">
-        <select id="calc-move" title="Move to folder"></select>
+        <button id="calc-kbd" class="icon-btn" title="Use phone keyboard" aria-label="Use phone keyboard">&#9000;</button>
+        <button id="calc-more" class="icon-btn" title="More options" aria-label="More options">&#8943;</button>
         <button id="calc-lock-toggle">Unlocked</button>
-        <button id="calc-delete" class="danger">Delete</button>
+        <div class="view-header-secondary">
+          <select id="calc-move" title="Move to folder"></select>
+          <button id="calc-delete" class="danger">Delete</button>
+        </div>
       </div>
-      <div id="calc-lines"></div>
-      <button id="calc-add-line">+ Add line</button>
+      <div class="calc-screen">
+        <div id="calc-lines"></div>
+        <button id="calc-add-line">+ Add line</button>
+      </div>
     </div>
+
+    <div id="keypad" aria-label="Calculator keypad"></div>
   </main>
 </div>
 

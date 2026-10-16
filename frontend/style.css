@@ -479,9 +479,27 @@ math-field {
   gap: 6px;
 }
 
-#btn-sidebar-open {
+[data-sidebar-open] {
   display: none;
-  margin-bottom: 14px;
+}
+
+#empty-state [data-sidebar-open] {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+}
+
+.view-header-secondary {
+  display: contents;
+}
+
+#calc-more,
+#calc-kbd {
+  display: none;
+}
+
+#keypad {
+  display: none;
 }
 
 #sidebar-backdrop {
@@ -492,7 +510,7 @@ math-field {
   display: none;
 }
 
-#app.sidebar-collapsed #btn-sidebar-open {
+#app.sidebar-collapsed [data-sidebar-open] {
   display: inline-block;
 }
 
@@ -554,37 +572,255 @@ math-field {
     display: none;
   }
 
-  #btn-sidebar-open,
-  #app.sidebar-collapsed #btn-sidebar-open {
+  [data-sidebar-open],
+  #app.sidebar-collapsed [data-sidebar-open] {
     display: inline-block;
     min-width: 44px;
   }
 
-  #main {
-    padding: calc(12px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 12px calc(12px + env(safe-area-inset-left));
+  #empty-state [data-sidebar-open] {
+    top: calc(12px + env(safe-area-inset-top));
+    left: 12px;
   }
 
   #empty-state {
-    margin-top: 40px;
+    margin-top: 0;
+    padding: 90px 24px 0;
   }
 
-  /* leave room under the last line for MathLive's on-screen keyboard */
+  /* --- handheld-calculator layout: dark body, light "screen", keypad --- */
+  #main {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
+    background: #0f1114;
+  }
+
   #calc-view {
-    padding-bottom: 40vh;
+    --bg: #eef1f5;
+    --bg-alt: #ffffff;
+    --panel: #f6f8fb;
+    --border: #c4ccd8;
+    --text: #12161c;
+    --text-dim: #566170;
+    --accent: #1c5bd6;
+    --accent-dim: #bcd3ff;
+    --error: #c0392b;
+    --danger: #c0392b;
+    color-scheme: light;
+    flex: 1;
+    min-height: 0;
+    max-width: none;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    color: var(--text);
   }
 
   .view-header {
+    flex: none;
     flex-wrap: wrap;
+    gap: 6px;
+    margin: 0;
+    padding: calc(8px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) 8px calc(8px + env(safe-area-inset-left));
+    background: linear-gradient(#1f4aa8, #153172);
+    color: #fff;
+  }
+
+  .view-header button,
+  .view-header input,
+  .view-header select {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+
+  .view-header select option {
+    color: #12161c;
+  }
+
+  .view-header button.danger:hover {
+    color: #ffb4b4;
   }
 
   .name-input {
-    flex: 1 1 100%;
-    font-size: 17px;
-  }
-
-  .view-header select {
     flex: 1 1 0;
     min-width: 0;
+    font-size: 16px;
+  }
+
+  #calc-more,
+  #calc-kbd {
+    display: inline-block;
+  }
+
+  .view-header #calc-kbd.active {
+    background: #e8892b;
+    border-color: #e8892b;
+  }
+
+  /* phone-keyboard mode: hide the on-screen keypad, screen takes the space */
+  #main.system-keyboard #keypad {
+    display: none;
+  }
+
+  #calc-lock-toggle.locked {
+    background: #e8892b;
+    border-color: #e8892b;
+  }
+
+  .view-header-secondary {
+    display: none;
+    flex: 1 1 100%;
+    gap: 6px;
+  }
+
+  .view-header.show-more .view-header-secondary {
+    display: flex;
+  }
+
+  .view-header-secondary select {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .calc-screen {
+    display: block;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 10px calc(10px + env(safe-area-inset-right)) 14px calc(10px + env(safe-area-inset-left));
+    background: var(--bg);
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* the keypad replaces MathLive's own keyboard/menu buttons */
+  math-field::part(virtual-keyboard-toggle),
+  math-field::part(menu-toggle) {
+    display: none;
+  }
+
+  #keypad {
+    display: grid;
+    flex: none;
+    grid-template-columns: repeat(5, 1fr);
+    grid-template-rows: repeat(7, 1fr);
+    gap: 6px;
+    height: min(47dvh, 410px);
+    padding: 10px calc(10px + env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left));
+    background: linear-gradient(#272a30, #16181c);
+    border-top: 3px solid #07080a;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -6px 16px rgba(0, 0, 0, 0.45);
+  }
+
+  #calc-view[hidden] ~ #keypad {
+    display: none;
+  }
+
+  .kp-key {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+    min-width: 0;
+    padding: 8px 0 0;
+    border: 1px solid #08090b;
+    border-bottom-width: 3px;
+    border-radius: 9px;
+    background: linear-gradient(#454a53, #2d3036);
+    color: #f2f4f7;
+    font-size: 17px;
+    font-weight: 600;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+
+  .kp-key:active {
+    border-bottom-width: 2px;
+    transform: translateY(1px);
+    filter: brightness(1.2);
+  }
+
+  .kp-sub {
+    position: absolute;
+    top: 3px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    color: #7fb0ff;
+    pointer-events: none;
+  }
+
+  .keypad-shift .kp-sub:not(:empty) {
+    color: #ffd24d;
+    font-size: 11px;
+  }
+
+  .kp-main {
+    pointer-events: none;
+  }
+
+  .k-num,
+  .k-letter {
+    background: linear-gradient(#f6f7f9, #d3d8df);
+    color: #14161a;
+    border-color: #6d727a;
+    font-size: 20px;
+  }
+
+  .keypad-alpha .k-letter {
+    background: linear-gradient(#fbe6c9, #e9b878);
+    border-color: #8a5a22;
+  }
+
+  .k-op {
+    background: linear-gradient(#566178, #36405a);
+    font-size: 20px;
+  }
+
+  .k-nav {
+    background: linear-gradient(#3b3f47, #25282d);
+  }
+
+  .k-shift-key {
+    background: linear-gradient(#4a86ff, #2559d6);
+    font-size: 13px;
+    padding-top: 0;
+  }
+
+  .k-alpha-key {
+    background: linear-gradient(#f3a24b, #d97a17);
+    color: #1b1206;
+    font-size: 13px;
+    padding-top: 0;
+  }
+
+  .k-shift-key.active,
+  .k-alpha-key.active {
+    box-shadow: 0 0 0 2px #fff inset;
+  }
+
+  .k-alpha-key.locked {
+    box-shadow: 0 0 0 2px #fff inset, 0 0 8px 2px #ffd24d;
+  }
+
+  .k-del {
+    background: linear-gradient(#b4424f, #8a2733);
+    font-size: 13px;
+  }
+
+  .k-enter {
+    background: linear-gradient(#4a86ff, #2559d6);
+    font-size: 13px;
+    padding-top: 0;
   }
 
   /* each line wraps: the math-field gets a full-width row of its own,
@@ -621,8 +857,9 @@ math-field {
     order: 3;
   }
 
+  /* HTML5 drag-and-drop doesn't work on touch, so the grip is just clutter */
   .calc-line > .drag-handle {
-    order: 0;
+    display: none;
   }
 
   .calc-line > .role-select {
