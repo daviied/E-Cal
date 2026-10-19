@@ -377,12 +377,16 @@ class PrimeLink {
   // still storing a note it has just received, answers come seconds late. Every
   // answer names its note, so an answer for another note is set aside. A note
   // that does not exist is never answered at all.
-  async getObject(name, ftype) {
-    for (let attempt = 0; attempt < 5; attempt++) {
+  async getObject(name, ftype, windows = [2500, 2500, 2500, 2500, 2500]) {
+    const t0 = performance.now();
+    const seen = [];
+    this.lastRead = null;
+    await sleep(60); // do not hammer the calculator with back-to-back requests
+    for (let attempt = 0; attempt < windows.length; attempt++) {
       await this.checkReady(2000);
       await this._drain();
       await this._send(fileMessage(CMD_REQUEST_FILE, name, ftype));
-      const end = performance.now() + 2500;
+      const end = performance.now() + windows[attempt];
       while (performance.now() < end) {
         let reply;
         try {
@@ -392,10 +396,26 @@ class PrimeLink {
           throw e;
         }
         const got = parseFileReply(reply);
-        if (got === null) return null;
-        if (got.name === name && got.type === ftype) return got.content;
+        if (got === null) {
+          this.lastRead = { name, outcome: 'the calculator said it has no such note', asked: attempt + 1, seen };
+          return null;
+        }
+        if (got.name === name && got.type === ftype) {
+          if (attempt > 0) {
+            this.log(name + ': answered on request ' + (attempt + 1) + ' after ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s');
+          }
+          return got.content;
+        }
+        seen.push(got.name);
       }
     }
+    this.lastRead = {
+      name,
+      outcome: 'no answer',
+      asked: windows.length,
+      secs: Math.round((performance.now() - t0) / 1000),
+      seen,
+    };
     return null;
   }
 
@@ -443,8 +463,8 @@ class PrimeLink {
     throw new LinkError('the calculator did not come back after a write' + (last ? ' (' + last.message + ')' : ''));
   }
 
-  async getNote(name) {
-    const content = await this.getObject(name, TYPE_NOTE);
+  async getNote(name, windows) {
+    const content = await this.getObject(name, TYPE_NOTE, windows);
     return content === null ? null : noteText(content);
   }
 
@@ -459,16 +479,27 @@ class PrimeLink {
 // What cvsync.store.UsbTarget.read does: an unanswered request is retried on
 // fresh connections, and an unanswered CVDATA is only taken to mean "no vault"
 // when the calculator has no other CalcVault notes either.
+// Seconds a G2 is given to answer for a note the index says exists.
+const PATIENT_READ = [6000, 10000, 14000];
+
 async function readNote(link, name) {
-  let text = await link.getNote(name);
+  let text = await link.getNote(name, name.startsWith('CVC') ? PATIENT_READ : undefined);
   if (text !== null) return text;
   if (name.startsWith('CVC')) {
-    for (let i = 0; i < 2; i++) {
+    // The index lists this note, so it exists: be patient (a G2 can take
+    // several seconds to answer) rather than ask over and over.
+    for (let i = 0; i < 1; i++) {
       await link.reopen();
-      text = await link.getNote(name);
+      text = await link.getNote(name, PATIENT_READ);
       if (text !== null) return text;
     }
-    return null;
+    const r = link.lastRead || {};
+    throw new LinkError(
+      name + ' did not arrive: ' + (r.outcome || 'no answer') +
+        (r.asked ? ' (asked ' + r.asked + ' times over ' + (r.secs || '?') + ' s' : ' (') +
+        (r.seen && r.seen.length ? '; other notes it sent instead: ' + [...new Set(r.seen)].join(', ') : '') +
+        '). Nothing was changed. Close CalcVault on the calculator, leave it on the Home screen, and try again.'
+    );
   }
   if (name !== 'CVDATA') return text;
   for (let i = 0; i < 3; i++) {
