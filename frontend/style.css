@@ -238,7 +238,7 @@ button.primary {
 }
 
 .view {
-  max-width: 760px;
+  max-width: 920px;
   margin: 0 auto;
 }
 
@@ -264,8 +264,9 @@ button.primary {
 /* --- calculator lines (edit / unlocked view) --- */
 .calc-line {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -303,9 +304,11 @@ button.primary {
   cursor: grabbing;
 }
 
+/* The field gets a real minimum width; the buttons beside it wrap onto a
+   second line when the row is too narrow, instead of squeezing it. */
 .calc-line math-field {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 340px;
+  min-width: 240px;
   --contains-highlight-background-color: var(--accent-dim);
 }
 

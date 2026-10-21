@@ -86,8 +86,34 @@ function normalizeOperators(ascii) {
     // symbols in ascii-math, but math.js's parser only accepts the ASCII
     // forms - needed for piecewise-style conditions (x>=0 ? a : b).
 }
+// Complex-number functions. math.js has re/im/conj/arg (and `i` as the
+// imaginary unit), but MathLive hands them over differently: \Re and \Im
+// come out as the symbols "ℜ"/"ℑ", \operatorname{Re} and plain typed letters
+// as spaced-out letters ("R e(z)", "c o n j(z)"). Pasted TI-Nspire text spells
+// them real(), imag() and angle(). All of those are mapped to math.js's names,
+// but only when followed by "(" so letters multiplied together aren't touched.
+const COMPLEX_NAMES = { Re: 're', Im: 'im', conj: 'conj', real: 're', imag: 'im', angle: 'arg' };
+const COMPLEX_NAME_PATTERNS = Object.entries(COMPLEX_NAMES).map(([word, fn]) => [
+  new RegExp('(?<![A-Za-z0-9_])' + word.split('').join(' ?') + '\\s*\\(', 'g'),
+  fn + '(',
+]);
+function normalizeComplexNames(ascii) {
+  let out = ascii.replace(/ℜ/g, 're').replace(/ℑ/g, 'im');
+  for (const [pattern, replacement] of COMPLEX_NAME_PATTERNS) out = out.replace(pattern, replacement);
+  return out;
+}
 function postProcessAscii(ascii) {
-  return normalizeOperators(convertMatrixParens(convertAbsBars(cleanSubscripts(ascii))));
+  return normalizeComplexNames(normalizeOperators(convertMatrixParens(convertAbsBars(cleanSubscripts(ascii)))));
+}
+
+// MathLive's ascii-math export drops \overline{z} (complex conjugate)
+// entirely, so it is rewritten to conj(z) before conversion.
+function rewriteOverline(latex) {
+  let out = latex;
+  for (let i = 0; i < 10 && out.includes('\\overline'); i++) {
+    out = out.replace(/\\overline\s*\{([^{}]*)\}/g, '\\operatorname{conj}\\left($1\\right)');
+  }
+  return out;
 }
 
 // ---------- copying equations out to TI-Nspire ----------
@@ -110,9 +136,13 @@ function postProcessAscii(ascii) {
 // Nspire's parser accepts a bare space (or bare juxtaposition of a
 // multi-character/subscripted variable) as multiplication the way math.js
 // does.
+const NSPIRE_FUNCTION_NAMES = { re: 'real', im: 'imag', arg: 'angle' };
 function explicitMultiplyHandler(node, options) {
   if (node.type === 'OperatorNode' && node.fn === 'multiply' && node.implicit) {
     return node.args.map((arg) => arg.toString(options)).join(' * ');
+  }
+  if (node.type === 'FunctionNode' && node.fn && NSPIRE_FUNCTION_NAMES[node.fn.name]) {
+    return NSPIRE_FUNCTION_NAMES[node.fn.name] + '(' + node.args.map((arg) => arg.toString(options)).join(', ') + ')';
   }
   return undefined; // fall through to math.js's default rendering
 }
@@ -129,6 +159,8 @@ function toNspireText(ascii) {
 
 function getFieldAscii(field) {
   try {
+    const latex = field.getValue('latex') || '';
+    if (latex.includes('\\overline')) return latexToAscii(latex);
     return postProcessAscii(field.getValue('ascii-math') || '');
   } catch {
     return getFieldLatex(field);
@@ -208,10 +240,9 @@ function guessCasVariable(ascii) {
   const idents = ascii.match(/[A-Za-z_][A-Za-z0-9_]*/g) || [];
   return idents.find((s) => !CAS_RESERVED_NAMES.has(s)) || 'x';
 }
-function computeCasResultLatex(ascii, kind, varName) {
+function computeDerivativeLatex(ascii, varName) {
   const casExpr = rewriteLogForCas(stripCasFunctionCallSpaces(ascii));
-  const nExpr = kind === 'diff' ? nerdamer.diff(casExpr, varName) : nerdamer.integrate(casExpr, varName);
-  return nerdamerLatexToAppConvention(nExpr.toTeX());
+  return nerdamerLatexToAppConvention(nerdamer.diff(casExpr, varName).toTeX());
 }
 
 // ---------- modal (replaces window.prompt/confirm, which don't render
@@ -296,7 +327,7 @@ function ensureBridge() {
 function latexToAscii(latex) {
   if (!latex) return '';
   const f = ensureBridge();
-  f.setValue(latex, { format: 'latex' });
+  f.setValue(rewriteOverline(latex), { format: 'latex' });
   return postProcessAscii(f.getValue('ascii-math') || '');
 }
 
@@ -829,7 +860,7 @@ function insertLineAfter(line) {
   renderCalcView();
 }
 
-// Used by the CAS (d/dx, ∫dx) buttons: drops the symbolic result into a
+// Used by the CAS (d/dx) button: drops the symbolic result into a
 // fresh plain Eq line right below the one it was computed from, leaving
 // the original expression untouched.
 function insertLineAfterWithLatex(line, latex) {
@@ -966,30 +997,27 @@ function makeMatrixButton(field) {
   return btn;
 }
 
-// Symbolic differentiate/integrate (via nerdamer, vendored in
+// Symbolic differentiation (via nerdamer, vendored in
 // frontend/lib/nerdamer/). Leaves the original line untouched and drops
 // the result into a fresh line right below it - same "insert a line"
 // pattern as pressing Enter. Note: this app's V_2ab4s-style multi-character
 // subscript variable names aren't recognized as single symbols by
 // nerdamer's parser (it splits them into separate implicitly-multiplied
 // tokens the way it would "2ab4s" on its own) - stick to single-letter
-// variable names when using these buttons.
-function makeCasButton(line, field, kind) {
+// variable names when using this button.
+function makeDiffButton(line, field) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'cas-btn';
-  btn.textContent = kind === 'diff' ? 'd/dx' : '∫dx';
-  btn.title = kind === 'diff' ? 'Differentiate (adds a new line below)' : 'Integrate (adds a new line below, no constant of integration)';
+  btn.textContent = 'd/dx';
+  btn.title = 'Differentiate (adds a new line below)';
   btn.addEventListener('click', async () => {
     const ascii = getFieldAscii(field);
     if (!ascii.trim()) return;
-    const varName = await askPrompt(
-      kind === 'diff' ? 'Differentiate with respect to:' : 'Integrate with respect to:',
-      guessCasVariable(ascii)
-    );
+    const varName = await askPrompt('Differentiate with respect to:', guessCasVariable(ascii));
     if (!varName) return;
     try {
-      const latex = computeCasResultLatex(ascii, kind, varName.trim());
+      const latex = computeDerivativeLatex(ascii, varName.trim());
       insertLineAfterWithLatex(line, latex);
     } catch (err) {
       await askAlert('Could not compute that: ' + err.message);
@@ -1133,8 +1161,7 @@ function renderEditLine(line) {
     row.appendChild(field);
     rowState.field = field;
     row.appendChild(makeMatrixButton(field));
-    row.appendChild(makeCasButton(line, field, 'diff'));
-    row.appendChild(makeCasButton(line, field, 'integrate'));
+    row.appendChild(makeDiffButton(line, field));
 
     const resultEl = document.createElement('div');
     resultEl.className = 'line-result';
@@ -1154,8 +1181,7 @@ function renderEditLine(line) {
     row.appendChild(field);
     rowState.field = field;
     row.appendChild(makeMatrixButton(field));
-    row.appendChild(makeCasButton(line, field, 'diff'));
-    row.appendChild(makeCasButton(line, field, 'integrate'));
+    row.appendChild(makeDiffButton(line, field));
 
     const resultEl = document.createElement('div');
     resultEl.className = 'line-result';
@@ -1422,17 +1448,17 @@ const KEYPAD_MAIN = [
     key('−', [T('-')], '=', [T('=')], 'k-op'),
   ],
   [
-    digit('1'),
-    digit('2'),
-    digit('3'),
-    key('+', [T('+')], '', null, 'k-op'),
+    digit('1', 'i', [T('i')]),
+    digit('2', 'Re', [L('\\operatorname{Re}'), T('(')]),
+    digit('3', 'Im', [L('\\operatorname{Im}'), T('(')]),
+    key('+', [T('+')], 'conj', [L('\\operatorname{conj}'), T('(')], 'k-op'),
     { id: 'enter', label: 'ENTER', cls: 'k-enter', span: 1, rows: 2 },
   ],
   [
-    digit('0', '', null),
+    digit('0', 'arg', FN('arg')),
     key('.', [T('.')], ',', [T(',')], 'k-num'),
     { id: 'up', label: '▲', shiftLabel: 'd/dx', cls: 'k-nav' },
-    { id: 'down', label: '▼', shiftLabel: '∫dx', cls: 'k-nav' },
+    { id: 'down', label: '▼', cls: 'k-nav' },
   ],
 ];
 
@@ -1488,10 +1514,10 @@ function moveToNeighborLine(delta) {
   }
 }
 
-function pressCas(which) {
+function pressDiff() {
   const row = activeKeypadRow();
-  const btns = row && row.field.closest('.calc-line')?.querySelectorAll('.cas-btn');
-  if (btns && btns[which]) btns[which].click();
+  const btn = row && row.field.closest('.calc-line')?.querySelector('.cas-btn');
+  if (btn) btn.click();
 }
 
 function pressSpecialKey(id) {
@@ -1511,12 +1537,11 @@ function pressSpecialKey(id) {
       if (row) insertLineAfter(row.line);
       break;
     case 'up':
-      if (keypadState.shift) pressCas(0);
+      if (keypadState.shift) pressDiff();
       else moveToNeighborLine(-1);
       break;
     case 'down':
-      if (keypadState.shift) pressCas(1);
-      else moveToNeighborLine(1);
+      moveToNeighborLine(1);
       break;
     case 'back-to-main':
       keypadState.alpha = false;

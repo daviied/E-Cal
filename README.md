@@ -13,8 +13,8 @@ math behind one input box and one output.
   - [math.js](https://mathjs.org/) does the actual evaluation, using a
     left-to-right variable scope per calculator (same mental model as Desmos:
     define `a = 5`, then `b = a * 2` on the next line, etc).
-  - [nerdamer](https://nerdamer.com/) does symbolic CAS work (differentiate,
-    integrate) for the `d/dx` / `∫dx` buttons on Eq/Output lines.
+  - [nerdamer](https://nerdamer.com/) does the symbolic differentiation behind
+    the `d/dx` button on Eq/Output lines.
 - **Backend**: Python (FastAPI) + SQLite. All folders and calculators are
   stored server-side in `/app/data/calcvault.db` (mounted as `./data` on the
   host) — nothing lives in browser storage.
@@ -74,18 +74,16 @@ for the rest of the session.
   evaluates to `5`. Plain matrix arithmetic (addition, multiplication)
   works too, since it's just math.js underneath.
 
-### CAS: derivatives and integrals
+### CAS: derivatives
 
-Eq and Output lines have two extra buttons next to the matrix button:
-**d/dx** and **∫dx**. Each asks which variable to use (pre-filled with its
-best guess — the first letter in the expression that isn't a known function
-name), then drops the symbolic result into a fresh line right below,
-leaving the original expression untouched. Both are computed by
-[nerdamer](https://nerdamer.com/), a separate symbolic-algebra engine from
-math.js (which only ever evaluates to a number) — vendored the same way as
-MathLive and math.js.
+Eq and Output lines have a **d/dx** button next to the matrix button. It
+asks which variable to use (pre-filled with its best guess — the first
+letter in the expression that isn't a known function name), then drops the
+symbolic derivative into a fresh line right below, leaving the original
+expression untouched. It is computed by [nerdamer](https://nerdamer.com/), a
+separate symbolic-algebra engine from math.js (which only ever evaluates to
+a number) — vendored the same way as MathLive and math.js.
 
-- Integrals have no constant of integration (`+ C`) added.
 - `log(x)`/`ln(x)` round-trip through this app's base‑10/natural convention
   correctly (nerdamer's own convention is the opposite, similar to
   math.js's — the conversion happens automatically in both directions).
@@ -93,10 +91,29 @@ MathLive and math.js.
   above aren't recognized as a single symbol by nerdamer's parser (it reads
   `V_2ab4s` as `V_2` times a separate variable `ab4s`) - stick to
   single-letter variable names (with or without a single-character
-  subscript, e.g. `x_1`) when using these buttons.
-- If nerdamer can't find a closed form, it returns special functions (e.g.
-  `erf`) rather than failing outright; genuinely invalid input shows an
-  error dialog instead of adding a line.
+  subscript, e.g. `x_1`) when using this button.
+- Invalid input shows an error dialog instead of adding a line.
+
+### Complex numbers
+
+`i` is the imaginary unit, so `z = 1 + 2i` works, and so do arithmetic,
+`|z|` (magnitude), `\sqrt{-4}` (`2i`) and polar form (`3e^{i\pi/4}`).
+Results print as `a + bi`. To take a number apart:
+
+| To get | Type | Keypad |
+|---|---|---|
+| real part | `Re(z)` or `\Re(z)` | SHIFT 2 |
+| imaginary part | `Im(z)` or `\Im(z)` | SHIFT 3 |
+| conjugate | `conj(z)` or `\overline{z}` (bar over z) | SHIFT + |
+| angle (radians) | `rg(z)` | SHIFT 0 |
+| magnitude | `\|z\|` (absolute-value bars) | SHIFT ^ |
+
+`Re`/`Im` must be followed by an opening parenthesis (that is how they are
+told apart from letters multiplied together); pasted TI-Nspire text
+`real(z)`, `imag(z)` and `angle(z)` is understood too, and the **⇄** copy
+button writes them back as `real`, `imag` and `angle`. (On a TI-Nspire the
+imaginary unit is its own ⅈ symbol rather than the letter i, so type that
+when pasting a number with an imaginary part back into it.)
 
 ### Copying to/from TI-Nspire
 
@@ -155,10 +172,10 @@ showing the calculator's lines under a blue title bar, and an on-screen
 keypad docked at the bottom that replaces both MathLive's own keyboard and
 the OS keyboard. Keys type into whichever line you last tapped:
 **SHIFT** (blue) one-shots the small blue label above a key (sin⁻¹, eˣ, 10ˣ,
-√ ↔ π, ≥ ≤ ≠ < > ? : _ =, a/b fraction, |x|, CLEAR…); **ALPHA** (orange)
+√ ↔ π, ≥ ≤ ≠ < > ? : _ =, a/b fraction, |x|, i, Re, Im, conj, arg, CLEAR…); **ALPHA** (orange)
 swaps in a letters layer for variable names (one-shot; tap twice to lock,
-**123** to return); **▲/▼** move between lines, and SHIFT+▲/▼ run the d/dx
-and ∫dx CAS actions on the current line; **ENTER** adds a new line below,
+**123** to return); **▲/▼** move between lines, and SHIFT+▲ runs the d/dx
+CAS action on the current line; **ENTER** adds a new line below,
 like pressing Enter on desktop. The **⌨** button in the title bar switches to your phone's normal keyboard
 for equation fields (hiding the keypad until you tap it again); an Input
 line's variable-name and label boxes always use the normal keyboard. The ⋯
