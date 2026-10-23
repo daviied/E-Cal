@@ -1,0 +1,94 @@
+{
+ "server": "calcvault-web",
+ "base": {
+  "folders": {
+   "1": {
+    "name": "Physics",
+    "parent": "0"
+   }
+  },
+  "calcs": {
+   "1": {
+    "updated_at": "2026-10-23T06:54:59.887931+00:00",
+    "server": {
+     "name": "Ohm",
+     "folder": "1",
+     "data": {
+      "locked": false,
+      "lines": [
+       {
+        "id": "idu0yvx0",
+        "role": "input",
+        "hidden": false,
+        "latex": "",
+        "varName": "V",
+        "label": "Voltage",
+        "value": "12",
+        "expr": ""
+       },
+       {
+        "id": "id0tijfu",
+        "role": "none",
+        "hidden": false,
+        "latex": "I=\\frac{V}{4}",
+        "varName": "",
+        "label": "",
+        "value": "",
+        "expr": ""
+       }
+      ]
+     }
+    },
+    "calc": {
+     "name": "Ohm",
+     "folder": "1",
+     "locked": false,
+     "lines": [
+      {
+       "uid": "idu0yvx0",
+       "role": "1",
+       "hidden": false,
+       "var": "V",
+       "label": "Voltage",
+       "text": "12"
+      },
+      {
+       "uid": "id0tijfu",
+       "role": "0",
+       "hidden": false,
+       "var": "",
+       "label": "",
+       "text": "I=V/4"
+      }
+     ]
+    }
+   }
+  },
+  "pending": {}
+ },
+ "shared": "{\"CVSH1\",{{\"idbfs6m3\",\"0\",\"0\",\"\",\"\",\"g=9.81\"}},{}}",
+ "cache": {
+  "1": {
+   "rev": "p17a11ac451",
+   "lines": [
+    {
+     "uid": "idu0yvx0",
+     "role": "1",
+     "hidden": false,
+     "var": "V",
+     "label": "Voltage",
+     "text": "12"
+    },
+    {
+     "uid": "id0tijfu",
+     "role": "0",
+     "hidden": false,
+     "var": "",
+     "label": "",
+     "text": "I=V/4"
+    }
+   ]
+  }
+ },
+ "last_sync": "2026-10-23T01:55:14"
+}

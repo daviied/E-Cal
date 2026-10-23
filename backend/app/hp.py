@@ -2,8 +2,9 @@
 
 The calculator's USB cable is plugged into the computer the *browser* runs on,
 so the browser (WebHID, see frontend/hp.js) does all the talking to the
-calculator. The merge logic is the HP Prime sync tool's own (hpprime/sync/
-cvsync), run here on the server: it needs to read and write the calculator's
+calculator. The merge logic is the HP Prime sync tool's own (hpprime2/sync/
+cvsync, CalcVault 2's, which also copies the shared lines), run here on the
+server: it needs to read and write the calculator's
 notes, and does so by asking the browser over a WebSocket, one request at a
 time. The page never sees the merge, only a log and the occasional
 "are you sure" question.
@@ -28,7 +29,7 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisco
 from . import db
 
 HP_SYNC_DIR = os.path.abspath(
-    os.environ.get("HP_SYNC_DIR", os.path.join(os.path.dirname(__file__), "..", "..", "hpprime", "sync"))
+    os.environ.get("HP_SYNC_DIR", os.path.join(os.path.dirname(__file__), "..", "..", "hpprime2", "sync"))
 )
 STATE_DIR = os.environ.get(
     "HP_STATE_DIR", os.path.join(os.path.dirname(os.path.abspath(db.DB_PATH)), "hpsync")

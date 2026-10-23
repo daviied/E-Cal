@@ -99,7 +99,7 @@
     <div class="hp-actions">
       <button id="hp-connect">Connect calculator</button>
       <button id="hp-sync" class="primary" disabled>Sync now</button>
-      <label class="hp-auto" title="Syncs by itself every few seconds, and does not ask before applying deletions (backups are kept on the server)"><input type="checkbox" id="hp-auto" disabled> Auto-sync (no prompts)</label>
+      <label class="hp-auto" title="Keeps the calculator in sync within a second or two, shows online on it, and opens there the calculator you open here. Does not ask before applying deletions (backups are kept on the server). Stays on for this browser until you turn it off."><input type="checkbox" id="hp-online" disabled> Online (calculator as a remote)</label>
     </div>
     <div id="hp-confirm" hidden>
       <p>This sync will make these changes. Apply them?</p>
@@ -111,9 +111,12 @@
     </div>
     <pre id="hp-log"></pre>
     <p class="hp-note">
-      Plug the calculator into this computer, turn it on, and leave it on its Home screen with CalcVault
-      closed. Close HP's Connectivity Kit first - only one program can use the USB connection. Works in
-      Chrome or Edge on a computer, over HTTPS.
+      Plug the calculator into this computer and turn it on. Close HP's Connectivity Kit first - only one
+      program can use the USB connection. Works in Chrome or Edge on a computer, over HTTPS.
+      <b>Online</b> is for CalcVault 2 (hpprime2): leave it open on the calculator and keep this page open
+      (it can be in the background); once switched on, it reconnects by itself whenever you open this
+      page with the calculator plugged in. For the first CalcVault app, or a plain sync, leave the
+      calculator on its Home screen with CalcVault closed.
     </p>
   </div>
 </div>

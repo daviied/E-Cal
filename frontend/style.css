@@ -525,6 +525,11 @@ math-field {
   border-color: #3f9b5a;
 }
 
+.hp-btn.online {
+  border-color: #3f9b5a;
+  background: color-mix(in srgb, #3f9b5a 18%, transparent);
+}
+
 .hp-box {
   width: min(560px, 94vw);
   max-height: 92vh;

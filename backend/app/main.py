@@ -108,6 +108,32 @@ def put_globals(body: GlobalsUpdate):
     return db.set_globals(body.data)
 
 
+# The calculator last opened in the web app, for the HP Prime online bridge
+# (hpprime2/sync, `cvsync online`), which opens the same one on the
+# calculator. Kept in memory only: it is a hint, not data.
+_hp_focus = {"calc_id": None, "token": "", "at": 0.0}
+
+
+class FocusBody(BaseModel):
+    calc_id: Optional[int] = None
+
+
+def _focus_out():
+    return {"calc_id": _hp_focus["calc_id"], "token": _hp_focus["token"],
+            "age": time.time() - _hp_focus["at"] if _hp_focus["at"] else None}
+
+
+@api.get("/hp-focus")
+def get_focus():
+    return _focus_out()
+
+
+@api.put("/hp-focus")
+def put_focus(body: FocusBody):
+    _hp_focus.update(calc_id=body.calc_id, token=os.urandom(4).hex(), at=time.time())
+    return _focus_out()
+
+
 class FolderCreate(BaseModel):
     name: str
     parent_id: Optional[int] = None

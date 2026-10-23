@@ -7,6 +7,9 @@
 // (backend/app/hp.py): it asks this page, over a WebSocket, to read or write
 // one note on the calculator at a time.
 //
+// Online mode (the panel's Online switch) keeps CalcVault 2 on the calculator
+// in step with this page while both are open: see onlineTick below.
+//
 // Needs: a browser with WebHID (Chrome or Edge on Windows/macOS/Linux/ChromeOS,
 // not Firefox, Safari, or Android), and https:// or localhost.
 
@@ -22,8 +25,8 @@ class LinkError extends Error {}
 class LinkTimeout extends Error {}
 
 const BUSY =
-  'the calculator stopped taking data. Close CalcVault (or any program) on the calculator: ' +
-  'it does not answer USB while a program is running.';
+  'the calculator stopped taking data: it does not answer USB while a program is running. Close ' +
+  'the program, or in CalcVault 2 turn on Settings > Let the PC sync while open.';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -257,7 +260,7 @@ class PrimeLink {
     await this.closeQuiet();
     throw new LinkError(
       'the calculator did not answer' + (last ? ' (' + last.message + ')' : '') +
-        '. Make sure it is on and on its Home screen, not running a program.'
+        '. Make sure it is on, and on its Home screen or in CalcVault 2.'
     );
   }
 
@@ -531,7 +534,7 @@ const panel = {
   status: $('hp-status'),
   connect: $('hp-connect'),
   sync: $('hp-sync'),
-  auto: $('hp-auto'),
+  online: $('hp-online'),
   confirm: $('hp-confirm'),
   confirmText: $('hp-confirm-text'),
   confirmYes: $('hp-confirm-yes'),
@@ -539,11 +542,52 @@ const panel = {
   log: $('hp-log'),
 };
 
+// Online mode (CalcVault 2 on the calculator): the calculator as a remote for
+// this page. About once a second it asks the calculator for CVREV, which the
+// app changes on every save, and every couple of seconds the server for the
+// tree; a change on either side runs the usual sync (the server's merge). It
+// also writes CVLINK every few seconds (the app shows "online" while that
+// keeps changing) and, when a calculator is opened here, CVFOCUS (the app
+// opens it too). Only one tab runs it, through a Web Lock.
+const ONLINE_TICK = 1000;
+const WEB_EVERY = 2000;
+const BEAT_EVERY = 4000;
+const ONLINE_KEY = 'calcvault.hp.online';
+
+function rememberOnline(on) {
+  try {
+    if (on) localStorage.setItem(ONLINE_KEY, '1');
+    else localStorage.removeItem(ONLINE_KEY);
+  } catch (e) {
+    // private window or blocked storage: online just will not restart by itself
+  }
+}
+
+function rememberedOnline() {
+  try {
+    return localStorage.getItem(ONLINE_KEY) === '1';
+  } catch (e) {
+    return false;
+  }
+}
+
 if (panel.open) {
   let link = null;
-  let busy = false;
-  let autoTimer = null;
+  let busy = false; // a sync is running
+  let ticking = false; // an online check is using the link
   let serverOk = null;
+
+  let online = false;
+  let onlineTimer = null;
+  let releaseLock = null;
+  let lastRev; // CVREV after the last sync (undefined: none yet)
+  let lastWeb = null; // the tree after the last sync
+  let tWeb = 0;
+  let tBeat = 0;
+  let answering = false;
+  let misses = 0;
+  let lastError = '';
+  let pendingFocus = null;
 
   const supported = !!navigator.hid && window.isSecureContext;
 
@@ -558,12 +602,18 @@ if (panel.open) {
   function refresh() {
     const ready = supported && serverOk !== false;
     panel.connect.disabled = !ready || busy;
-    panel.sync.disabled = !ready || !link || busy;
-    panel.auto.disabled = !ready || !link;
+    panel.sync.disabled = !ready || !link || busy || ticking;
+    panel.online.disabled = !ready;
+    panel.online.checked = online;
     panel.open.classList.toggle('connected', !!link);
+    panel.open.classList.toggle('online', online && !!link && answering);
+    panel.open.textContent = online ? (link && answering ? 'HP Prime: online' : 'HP Prime: waiting') : 'HP Prime';
     if (!supported) return;
     if (serverOk === false) return;
     if (busy) setStatus('Syncing…');
+    else if (online && !link) setStatus('Online: waiting for the calculator (plug it in and turn it on).');
+    else if (online && !answering) setStatus('Online: the calculator is not answering yet.');
+    else if (online) setStatus('Online: the calculator follows this page.');
     else setStatus(link ? 'Calculator connected.' : 'No calculator connected.');
   }
 
@@ -584,6 +634,11 @@ if (panel.open) {
     await l.open();
     link = l;
     return l;
+  }
+
+  function dropLink() {
+    if (link) link.close().catch(() => {});
+    link = null;
   }
 
   async function connect() {
@@ -631,11 +686,13 @@ if (panel.open) {
     });
   }
 
+  // One sync, run by the server. Answers true when it finished.
   async function runSync(auto) {
-    if (busy || !supported) return;
+    if (busy || ticking || !supported) return false;
     busy = true;
     refresh();
     let ws = null;
+    let ok = false;
     try {
       const l = await ensureLink();
       const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/hp/ws';
@@ -674,13 +731,11 @@ if (panel.open) {
       if (result.error) say(stamp() + '  ' + result.error);
       else if (result.code !== 0) say(stamp() + '  stopped; nothing was synced');
       else if (!auto || result.changed) say(stamp() + (result.changed ? '  synced' : '  already in sync'));
+      ok = !result.error && result.code === 0;
     } catch (e) {
       say(stamp() + '  ' + e.message);
       // A dead link (unplugged, or left busy) is dropped so the next try reconnects.
-      if (e instanceof LinkError || e instanceof LinkTimeout) {
-        if (link) link.close().catch(() => {});
-        link = null;
-      }
+      if (e instanceof LinkError || e instanceof LinkTimeout) dropLink();
     } finally {
       if (ws) {
         ws.onclose = null;
@@ -689,21 +744,156 @@ if (panel.open) {
       busy = false;
       refresh();
     }
+    return ok;
   }
 
-  function setAuto(on) {
-    const wasOn = autoTimer !== null;
-    clearInterval(autoTimer);
-    autoTimer = null;
-    if (on) {
-      autoTimer = setInterval(() => {
-        if (link && !busy) runSync(true);
-      }, 8000);
-      say(stamp() + '  auto-sync on (checks every few seconds; close CalcVault on the calculator for it to see changes)');
-    } else if (wasOn) {
-      say(stamp() + '  auto-sync off');
+  // ---- online mode
+
+  async function webTree() {
+    const res = await fetch('/api/tree', { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('the web app answered ' + res.status + (res.status === 401 ? ' (not logged in)' : ''));
+    return res.text();
+  }
+
+  // The calculator's CVREV, or null when it does not answer in time (or has
+  // no CalcVault notes yet). One short try: this runs every second.
+  const revOf = (l) => l.getNote('CVREV', [1500]);
+
+  function token() {
+    return Math.random().toString(16).slice(2, 10);
+  }
+
+  async function onlineTick() {
+    if (!online || busy || ticking) return;
+    ticking = true;
+    let needSync = false;
+    let l = null;
+    try {
+      l = await ensureLink();
+      const rev = await revOf(l);
+      const was = answering;
+      answering = rev !== null;
+      if (answering) {
+        misses = 0;
+        if (rev !== lastRev) needSync = true;
+        if (!was) say(stamp() + '  online: the calculator is answering');
+      } else {
+        misses++;
+        // A calculator never synced has no CVREV yet: one sync makes it.
+        if (lastRev === undefined && misses === 1) needSync = true;
+        if (misses === 3) {
+          say(stamp() + '  online: the calculator does not answer. Open CalcVault 2 on it (with Settings > ' +
+            'Let the PC sync while open on), or leave it on its Home screen.');
+        }
+      }
+      if (pendingFocus !== null) tWeb = 0; // a calculator just made here must reach it first
+      if (performance.now() - tWeb >= WEB_EVERY) {
+        const tree = await webTree();
+        tWeb = performance.now();
+        if (tree !== lastWeb) needSync = true;
+      }
+      lastError = '';
+    } catch (e) {
+      if (e.message !== lastError) say(stamp() + '  online: ' + e.message);
+      lastError = e.message;
+      answering = false;
+      if (e instanceof LinkError || e instanceof LinkTimeout) dropLink();
+      ticking = false;
+      refresh();
+      return;
+    }
+    ticking = false;
+    refresh();
+
+    if (needSync) {
+      if (!(await runSync(true))) return;
+      ticking = true;
+      try {
+        lastRev = await revOf(link || l);
+        lastWeb = await webTree();
+        tWeb = performance.now();
+      } catch (e) {
+        lastRev = undefined;
+      } finally {
+        ticking = false;
+      }
+    }
+    if (!online || !answering || !link || busy) return;
+    ticking = true;
+    try {
+      if (pendingFocus !== null) {
+        const id = pendingFocus;
+        pendingFocus = null;
+        await link.putNote('CVFOCUS', id + ';' + token(), true);
+      }
+      if (performance.now() - tBeat >= BEAT_EVERY) {
+        await link.putNote('CVLINK', 'b' + token(), true);
+        tBeat = performance.now();
+      }
+    } catch (e) {
+      say(stamp() + '  online: ' + e.message);
+      if (e instanceof LinkError || e instanceof LinkTimeout) dropLink();
+    } finally {
+      ticking = false;
+      refresh();
     }
   }
+
+  function loop() {
+    onlineTimer = setTimeout(async () => {
+      try {
+        await onlineTick();
+      } finally {
+        if (online) loop();
+      }
+    }, ONLINE_TICK);
+  }
+
+  async function setOnline(on, quiet = false) {
+    if (on === online) return;
+    if (!on) {
+      online = false;
+      clearTimeout(onlineTimer);
+      if (releaseLock) releaseLock();
+      releaseLock = null;
+      rememberOnline(false);
+      say(stamp() + '  online off');
+      refresh();
+      return;
+    }
+    // One tab at a time: two would take turns with the same USB connection.
+    const got = await new Promise((resolve) => {
+      if (!navigator.locks) return resolve(true);
+      navigator.locks.request('calcvault-hp-online', { ifAvailable: true }, (lock) => {
+        if (!lock) return resolve(false);
+        resolve(true);
+        return new Promise((release) => {
+          releaseLock = release;
+        });
+      });
+    });
+    if (!got) {
+      if (!quiet) say(stamp() + '  online is already running in another CalcVault tab');
+      refresh();
+      return;
+    }
+    online = true;
+    lastRev = undefined;
+    lastWeb = null;
+    tWeb = 0;
+    tBeat = 0;
+    misses = 0;
+    answering = false;
+    lastError = '';
+    rememberOnline(true);
+    say(stamp() + '  online on: keep this page open (it can be in the background)');
+    refresh();
+    loop();
+  }
+
+  window.addEventListener('calcvault:calc-opened', (e) => {
+    if (online && e.detail && e.detail.id != null) pendingFocus = e.detail.id;
+  });
 
   panel.open.addEventListener('click', async () => {
     panel.overlay.hidden = false;
@@ -724,16 +914,25 @@ if (panel.open) {
   });
   panel.connect.addEventListener('click', connect);
   panel.sync.addEventListener('click', () => runSync(false));
-  panel.auto.addEventListener('change', () => setAuto(panel.auto.checked));
+  panel.online.addEventListener('change', () => setOnline(panel.online.checked));
 
   if (navigator.hid) {
     navigator.hid.addEventListener('disconnect', (e) => {
       if (link && link.dev === e.device) {
         link = null;
+        answering = false;
         say(stamp() + '  calculator unplugged');
         refresh();
       }
     });
   }
   refresh();
+
+  // Online stays on for this browser: back on by itself when the page opens,
+  // if this browser was already allowed to use the calculator.
+  if (supported && rememberedOnline()) {
+    navigator.hid.getDevices().then((devs) => {
+      if (devs.some(matches)) setOnline(true, true);
+    });
+  }
 }

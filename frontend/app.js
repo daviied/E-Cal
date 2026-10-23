@@ -787,6 +787,11 @@ async function selectCalculator(id) {
   views.calculator.hidden = false;
   renderCalcView();
   renderTree();
+  // Online mode opens this calculator on the HP Prime too: hp.js when this
+  // page runs it, the PC tool (`cvsync online`) through the server. Only a
+  // hint, so failures are ignored.
+  window.dispatchEvent(new CustomEvent('calcvault:calc-opened', { detail: { id } }));
+  apiPut('/api/hp-focus', { calc_id: id }).catch(() => {});
 }
 
 // What is open can be a calculator, a folder's shared lines, or the global
@@ -863,11 +868,14 @@ async function flushSave() {
 // every control) to a clean view: hidden 'none' lines disappear, and
 // input/output lines show only their label + value, never the underlying
 // variable name or expression.
+//
+// A new plain line starts hidden when locked: the locked view is meant to
+// show Inputs and Outputs, with the working out of sight.
 function newLine(role = 'none', overrides = {}) {
   return {
     id: crypto.randomUUID(),
     role,
-    hidden: false,
+    hidden: role === 'none',
     latex: '',
     varName: '',
     label: '',

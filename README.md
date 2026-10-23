@@ -29,7 +29,9 @@ one shared scope (same mental model as Desmos: `a = 5`, then `b = a * 2` on
 the next line can see `a`). Each line has a role:
 
 - **Eq** — a plain equation/expression as a `<math-field>`, with its computed
-  value shown alongside. Can be checked **Hidden when locked**.
+  value shown alongside. Can be checked **Hidden when locked**; a new Eq
+  line starts checked, so the locked view shows only Inputs and Outputs
+  until you choose otherwise.
 - **Input** — a variable with its own display label, independent of the
   variable name (e.g. variable `V`, labeled "Voltage"). Always shown as an
   editable box, in both locked and unlocked views.
@@ -74,10 +76,11 @@ global set) has three lines. Moving a calculator to another folder changes
 what it inherits immediately.
 
 Errors in a shared line show where that line is edited, not in every
-calculator that uses it. Shared lines live in the web app only: **the HP
-Prime sync copies each calculator's own lines but not these**, so on the
-calculator a line that relies on a shared constant will not know it. (Define it
-in the calculator itself if you need it there.)
+calculator that uses it. Shared lines are edited in the web app only. The
+first HP Prime app's sync (`hpprime/`) copies each calculator's own lines but
+not these, so there a line that relies on a shared constant will not know
+it. **CalcVault 2** (`hpprime2/`) copies them to the calculator, read-only,
+and evaluates them in the same order as here.
 
 ### Math notes
 
@@ -216,19 +219,32 @@ device. Drag-to-reorder lines/folders uses desktop-style drag and drop, which
 touch browsers don't support, so reordering is a desktop/mouse feature for
 now.
 
+## HP Prime G2: CalcVault 2 and online mode
+
+`hpprime2/` holds the second version of the calculator app and its PC sync
+tool (the first, `hpprime/`, is unchanged). It adds Enter-for-a-new-Eq-line,
+a tap-to-type palette of the calculator's variable names, shared lines on
+the calculator, and an **online mode**: the calculator works as a remote for
+this app, kept in step within a second or two while CalcVault 2 is open on
+it, and opening a calculator here opens it there too. Online mode runs in
+this page (the **Online** switch in the HP Prime panel below; nothing to
+install), or from the PC tool `hpprime2/sync/Online CalcVault.bat`, which
+learns what is open here through `GET`/`PUT /api/hp-focus` (a hint kept in
+memory only). See `hpprime2/README.md`.
+
 ## Syncing with an HP Prime G2 from the web page
 
 The **HP Prime** button in the sidebar opens a panel that connects a G2 and
 syncs it with this app: the same two-way merge as the PC tool in
-`hpprime/` (see `hpprime/README.md` for the calculator app itself and for how
+`hpprime2/` (see `hpprime2/README.md` for the calculator app itself and for how
 folders, lines, conflicts and deletions are handled), but run from the web
 page, with nothing to install on the PC.
 
 How it works: the calculator's USB cable goes into the computer the
 **browser** is running on. The page talks to the calculator directly with
 WebHID (`frontend/hp.js`, a JavaScript port of the USB layer in
-`hpprime/sync/cvsync/primelink.py`), while the merge runs on the server
-(`backend/app/hp.py` → `hpprime/sync/cvsync/webrun.py`), which asks the page
+`hpprime2/sync/cvsync/primelink.py`), while the merge runs on the server
+(`backend/app/hp.py` → `hpprime2/sync/cvsync/webrun.py`), which asks the page
 over a WebSocket to read or write one note at a time. Nothing about your
 calculators is sent anywhere except between your browser and your own server.
 
@@ -236,9 +252,13 @@ To use it: plug the calculator in, turn it on, leave it on its Home screen
 with CalcVault closed, close HP's Connectivity Kit, then in the panel press
 **Connect calculator** (pick the HP Prime in the browser's chooser, once) and
 **Sync now**. A sync that would delete something or resolve a conflict shows
-what it will do and asks first. **Auto-sync** repeats a sync every few
-seconds and does *not* ask (like the PC tool's live mode); it needs CalcVault
-closed on the calculator to see calculator-side changes.
+what it will do and asks first. **Online** keeps syncing by itself (within a
+second or two of a change on either side) and does *not* ask, like the PC
+tool's live mode, with backups as the safety net. It is meant for CalcVault 2
+left open on the calculator (it also shows "online" there and opens what you
+open here), stays on for this browser until switched off, and restarts by
+itself when the page is opened with the calculator plugged in. With the first
+CalcVault app, close it on the calculator for a sync.
 
 Requirements and limits:
 
@@ -254,7 +274,9 @@ Requirements and limits:
   given calculator: each keeps its own record of what was last synced, so
   alternating between them makes it report changes as conflicts (nothing is
   lost - the calculator's version is kept as a "(calculator copy)").
-- The Docker image includes the sync code from `hpprime/sync/cvsync`; if you
+- The Docker image includes the sync code from `hpprime2/sync/cvsync`
+  (CalcVault 2's, which works with either calculator app and also copies the
+  global and folder lines); if you
   build a stripped-down image without that folder, the panel says the server
   cannot sync (the rest of the app is unaffected).
 - **How sure is this:** the server half is tested end to end with a simulated
