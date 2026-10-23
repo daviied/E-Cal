@@ -107,6 +107,8 @@ cvDrawEdit(ztitle, zt, zp, zpg, zal, zline);
 cvEdit(ztitle, zval, zline);
 cvInline(zix);
 cvSettings();
+cvVarKeys(zlines);
+cvDrawVars();
 
 // ---- state -------------------------------------------------------------
 LOCAL cvDev := "";        // device id, set by the sync tool
@@ -132,6 +134,12 @@ LOCAL cvKb := 1;          // 1 shows the on-screen keyboard when editing
 LOCAL cvEdRow := 0;       // line being edited in place (locked view), or 0
 LOCAL cvEdTxt := "";
 LOCAL cvEdPos := 0;
+LOCAL cvEdVars := {};     // variable buttons for the editor (empty: none)
+LOCAL cvVarOff := 0;      // first variable button shown (16 per page)
+LOCAL cvEdExit := 0;      // how the last edit ended: 1 Enter, 2 OK, 3 touch outside
+LOCAL cvChainNew := 0;    // 1: the Eq line about to be edited was just made by Enter
+// Bottom row of the variables page.
+LOCAL cvKPV := {"#A","+","-","*","/","^","(",")","=","#N"};
 
 // On-screen keyboard: 5 rows of 10 keys per page. #S switches case, #F
 // goes to the functions page, #A back to letters.
@@ -642,6 +650,31 @@ BEGIN
   RETURN zout;
 END;
 
+// What the variable buttons type: each Input's variable and each name a
+// line assigns, and a function's name with its "(".
+cvVarKeys(zlines)
+BEGIN
+  LOCAL zi, zl, zs, zout, zk;
+  zout := {};
+  FOR zi FROM 1 TO SIZE(zlines) DO
+    zl := zlines(zi);
+    zk := "";
+    IF zl(2) == "1" THEN
+      zs := cvTrim(zl(4));
+      IF cvIsIdent(zs) THEN zk := zs; END;
+    END;
+    IF zl(2) == "0" THEN
+      zs := cvSplit(zl(6));
+      IF zs(1) == 1 THEN zk := zs(2); END;
+      IF zs(1) == 2 THEN zk := zs(2) + "("; END;
+    END;
+    IF DIM(zk) > 0 THEN
+      IF POS(zout, zk) == 0 THEN zout(SIZE(zout) + 1) := zk; END;
+    END;
+  END;
+  RETURN zout;
+END;
+
 cvPurge(znames)
 BEGIN
   LOCAL zi, zs;
@@ -1033,6 +1066,10 @@ END;
 
 cvKbLabel(zlab, zpg)
 BEGIN
+  // With variable buttons available, the letter pages' last key leads back
+  // to them (pi is on the other pages).
+  IF zlab == "π" AND zpg < 2 AND SIZE(cvEdVars) > 0 THEN RETURN "vars"; END;
+  IF zlab == "#N" THEN RETURN IFTE(SIZE(cvEdVars) > 16, "more", "π"); END;
   IF zlab == "#S" THEN RETURN IFTE(zpg == 1, "abc", "ABC"); END;
   IF zlab == "#F" THEN RETURN "fn"; END;
   IF zlab == "#A" THEN RETURN "abc"; END;
@@ -1044,6 +1081,10 @@ cvDrawKb(zpg)
 BEGIN
   LOCAL zi, zr, zc, zx, zy, zl;
   LOCAL zkeys, zfill;
+  IF zpg == 3 THEN
+    cvDrawVars();
+    RETURN 0;
+  END;
   zkeys := cvKP0;
   IF zpg == 1 THEN zkeys := cvKP1; END;
   IF zpg == 2 THEN zkeys := cvKP2; END;
@@ -1055,8 +1096,41 @@ BEGIN
     zy := 102 + zr * 22;
     zl := cvKbLabel(zkeys(zi), zpg);
     zfill := RGB(245, 245, 248);
-    IF LEFT(zkeys(zi), 1) == "#" THEN zfill := RGB(190, 205, 230); END;
+    IF LEFT(zkeys(zi), 1) == "#" OR zl == "vars" THEN zfill := RGB(190, 205, 230); END;
     RECT_P(G1, zx + 1, zy + 1, zx + 30, zy + 20, RGB(120, 128, 140), zfill);
+    TEXTOUT_P(zl, G1, zx + MAX(2, FLOOR((31 - 6 * DIM(zl)) / 2)), zy + 4, 2, RGB(0, 0, 0), 29);
+  END;
+END;
+
+// The variables page: 16 wide buttons (4 rows of 4), then a row of
+// operators with "abc" for the letter keyboard and "more" when there are
+// more than 16 variables.
+cvDrawVars()
+BEGIN
+  LOCAL zk, zi, zr, zc, zx, zy;
+  LOCAL zl;
+  RECT_P(G1, 0, 101, 319, 212, RGB(70, 76, 88), RGB(70, 76, 88));
+  IF SIZE(cvEdVars) == 0 THEN
+    TEXTOUT_P("No variables in this calculator yet.", G1, 8, 140, 2, RGB(255, 255, 255), 304);
+  END;
+  FOR zk FROM 0 TO 15 DO
+    zi := cvVarOff + zk + 1;
+    zr := FLOOR(zk / 4);
+    zc := zk - zr * 4;
+    zx := zc * 80;
+    zy := 102 + zr * 22;
+    IF zi <= SIZE(cvEdVars) THEN
+      zl := cvEdVars(zi);
+      RECT_P(G1, zx + 1, zy + 1, zx + 78, zy + 20, RGB(120, 128, 140), RGB(255, 246, 214));
+      TEXTOUT_P(zl, G1, zx + MAX(3, FLOOR((79 - 7 * DIM(zl)) / 2)), zy + 4, 2, RGB(20, 40, 120), 74);
+    END;
+  END;
+  FOR zi FROM 1 TO 10 DO
+    zx := (zi - 1) * 32;
+    zy := 190;
+    zl := cvKbLabel(cvKPV(zi), 3);
+    RECT_P(G1, zx + 1, zy + 1, zx + 30, zy + 20, RGB(120, 128, 140),
+           IFTE(LEFT(cvKPV(zi), 1) == "#", RGB(190, 205, 230), RGB(245, 245, 248)));
     TEXTOUT_P(zl, G1, zx + MAX(2, FLOOR((31 - 6 * DIM(zl)) / 2)), zy + 4, 2, RGB(0, 0, 0), 29);
   END;
 END;
@@ -1138,6 +1212,9 @@ BEGIN
   LOCAL zk, zs, zr, zx, zy, zlab;
   LOCAL zby, zi, zkeys;
   zt := zval; zp := DIM(zt); zpg := 0; zal := 0; zsh := 0; zr := 0;
+  IF SIZE(cvEdVars) > 0 THEN zpg := 3; END;
+  cvVarOff := 0;
+  cvEdExit := 0;
   zby := -1;
   IF zline > 0 THEN
     FOR zi FROM 1 TO SIZE(cvRowL) DO
@@ -1152,7 +1229,7 @@ BEGIN
     IF ze(1) == 1 THEN
       zk := ze(2);
       CASE
-        IF zk == 30 THEN zr := 1; END;
+        IF zk == 30 THEN zr := 1; cvEdExit := 1; END;
         IF zk == 4 THEN zr := -1; END;
         IF zk == 7 THEN zp := MAX(0, zp - 1); END;
         IF zk == 8 THEN zp := MIN(DIM(zt), zp + 1); END;
@@ -1183,16 +1260,38 @@ BEGIN
             IF zp > 0 THEN zt := cvHead(zt, zp - 1) + cvTail(zt, zp + 1); zp := zp - 1; END;
           END;
           IF zi == 5 THEN cvKb := 1 - cvKb; cvSaveSet(); END;
-          IF zi == 6 THEN zr := 1; END;
+          IF zi == 6 THEN zr := 1; cvEdExit := 2; END;
         END;
       ELSE
+        IF cvKb AND zy >= 102 AND zpg == 3 THEN
+          IF zy < 190 THEN
+            zi := cvVarOff + MIN(3, FLOOR((zy - 102) / 22)) * 4 + MIN(3, FLOOR(zx / 80)) + 1;
+            IF zi <= SIZE(cvEdVars) THEN zs := cvEdVars(zi); END;
+          ELSE
+            zlab := cvKPV(MIN(9, FLOOR(zx / 32)) + 1);
+            CASE
+              IF zlab == "#A" THEN zpg := 0; END;
+              IF zlab == "#N" THEN
+                IF SIZE(cvEdVars) > 16 THEN
+                  cvVarOff := cvVarOff + 16;
+                  IF cvVarOff >= SIZE(cvEdVars) THEN cvVarOff := 0; END;
+                ELSE
+                  zs := "π";
+                END;
+              END;
+              DEFAULT zs := zlab;
+            END;
+          END;
+        ELSE
         IF cvKb AND zy >= 102 THEN
           zkeys := cvKP0;
           IF zpg == 1 THEN zkeys := cvKP1; END;
           IF zpg == 2 THEN zkeys := cvKP2; END;
           zi := MIN(4, FLOOR((zy - 102) / 22)) * 10 + MIN(9, FLOOR(zx / 32)) + 1;
           zlab := zkeys(zi);
+          IF zlab == "π" AND zpg < 2 AND SIZE(cvEdVars) > 0 THEN zlab := "#V"; END;
           CASE
+            IF zlab == "#V" THEN zpg := 3; END;
             IF zlab == "#S" THEN zpg := IFTE(zpg == 1, 0, 1); END;
             IF zlab == "#F" THEN zpg := 2; END;
             IF zlab == "#A" THEN zpg := 0; END;
@@ -1203,7 +1302,9 @@ BEGIN
             // A touch elsewhere on the calculator: done, and let it act.
             cvPend := {zx, zy};
             zr := 1;
+            cvEdExit := 3;
           END;
+        END;
         END;
       END;
     END;
@@ -1403,7 +1504,7 @@ END;
 
 cvEditLine(zix)
 BEGIN
-  LOCAL zl, zs, zv, zlab, zlock;
+  LOCAL zl, zs, zv, zlab, zlock, znew;
   zl := cvCa(cvCI, 5, zix);
   zlock := cvCa(cvCI, 4) == "1";
   IF zlock THEN
@@ -1425,17 +1526,41 @@ BEGIN
     IF zl(2) == "2" THEN
       zlab := cvAsk("Output line", "label (shown when locked)", zl(5));
       IF TYPE(zlab) <> 2 THEN RETURN 0; END;
+      cvEdVars := cvVarKeys(cvCa(cvCI, 5));
       zs := cvAsk("Output line", "expression", zl(6));
+      cvEdVars := {};
       IF TYPE(zs) <> 2 THEN RETURN 0; END;
       cvCa(cvCI, 5, zix, 5) := zlab;
       cvCa(cvCI, 5, zix, 6) := zs;
     END;
     DEFAULT
+      znew := cvChainNew;
+      cvChainNew := 0;
+      cvEdVars := cvVarKeys(cvCa(cvCI, 5));
       zs := cvAsk("Equation", "", zl(6));
-      IF TYPE(zs) <> 2 THEN RETURN 0; END;
+      cvEdVars := {};
+      IF TYPE(zs) <> 2 OR (znew AND DIM(zs) == 0) THEN
+        // A new line left empty (or cancelled) goes away again.
+        IF znew THEN
+          cvCa(cvCI, 5) := cvRemoveAt(cvCa(cvCI, 5), zix);
+          cvSel := MAX(1, cvSel - 1);
+          IF cvSaveCalc(cvCI) THEN cvEval(); END;
+        END;
+        RETURN 0;
+      END;
       cvCa(cvCI, 5, zix, 6) := zs;
   END;
   IF cvSaveCalc(cvCI) THEN cvEval(); END;
+  // Enter on an equation: a new equation line below, being edited.
+  IF zl(2) == "0" AND cvEdExit == 1 AND DIM(zs) > 0 THEN
+    cvCa(cvCI, 5) := cvInsertAt(cvCa(cvCI, 5), zix + 1, {"", "0", "0", "", "", ""});
+    cvRows();
+    FOR zv FROM 1 TO SIZE(cvRowL) DO
+      IF cvRowL(zv, 2) == zix + 1 THEN cvSel := zv; END;
+    END;
+    cvChainNew := 1;
+    cvEditLine(zix + 1);
+  END;
   RETURN 1;
 END;
 
@@ -1458,6 +1583,7 @@ BEGIN
     IF cvRowL(zn, 2) == zix THEN cvSel := zn; END;
   END;
   cvEval();
+  IF zrole == "0" THEN cvChainNew := 1; END;
   cvEditLine(zix);
   RETURN 1;
 END;
