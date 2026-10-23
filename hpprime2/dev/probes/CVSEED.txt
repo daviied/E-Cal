@@ -1,0 +1,14 @@
+// Made by seed_emu.py: the test vault's notes, written on the calculator.
+EXPORT CVSEED()
+BEGIN
+  LOCAL q;
+  q := CHAR(34);
+  Notes("CVC1") := REPLACE("{{~a1~,~1~,~0~,~h~,~height~,~3~},{~a2~,~0~,~1~,~~,~~,~W=m*g~},{~a3~,~2~,~0~,~~,~Energy~,~W*h~}}", "~", q);
+  Notes("CVDATA") := REPLACE("{~CVDB2~,~emutest~,~1~,{{~7~,~0~,~Physics~}},{{~21~,~7~,~Weight~,~0~,~1~,~p1723e59946~}}}", "~", q);
+  Notes("CVSHR") := REPLACE("{~CVSH1~,{{~g1~,~0~,~0~,~~,~~,~g=9.81~}},{{~7~,{{~f1~,~1~,~0~,~m~,~mass~,~2~}}}}}", "~", q);
+  Notes("CVREV") := REPLACE("pseed", "~", q);
+  IFERR Notes("CVSET") := ""; THEN END;
+  IFERR Notes("CVLINK") := ""; THEN END;
+  IFERR Notes("CVFOCUS") := ""; THEN END;
+  RETURN "seeded";
+END;

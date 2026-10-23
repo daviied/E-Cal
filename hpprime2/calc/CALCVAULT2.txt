@@ -1,0 +1,2178 @@
+// CalcVault for the HP Prime G2.
+//
+// The same folders and calculators as the web app, kept in notes the PC sync
+// tool (hpprime/sync) reads and writes over USB.
+// Run CALCVAULT2 from Home (no parentheses).
+//
+// Storage is split so a sync moves only what changed:
+//   CVDATA     STRING() of {"CVDB2", deviceId, nextNewId, folders, calcs}
+//              folder = {id, parentId, name}               parentId "0" = top
+//              calc   = {id, folderId, name, locked, slot, rev}
+//   CVC<slot>  STRING() of that calculator's lines
+//              line   = {uid, role, hidden, var, label, text}
+//     role "0" Eq (text is the equation), "1" Input (text is the value),
+//     "2" Output (text is the expression). Every field is a string, so the
+//     notes do not depend on the calculator's number format. rev changes
+//     whenever a calculator's lines are saved; slot never changes.
+// In memory a calculator is {id, folder, name, locked, lines, slot, rev,
+// loaded}: lines are read from CVC<slot> when it is first opened (loaded
+// "1"; "2" when its note could not be read, which then is never saved over).
+// The older single-note layout (CVDB1, lines inside CVDATA) is converted
+// the first time it is loaded.
+// Ids made on the calculator are "n1", "n2", ...; the sync tool swaps them
+// for the web app's ids.
+//
+// Evaluation runs in the CAS, top to bottom, like the web app. A name the
+// calculator defines (an Input's variable, the left side of "a=..." or
+// "f(x)=...") becomes zcvname in the CAS, and every other free name becomes
+// zcsname, so nothing here reads or overwrites the CAS's own variables.
+// Both prefixes are taken off again before anything is shown. (No
+// underscore in them: the CAS refused to store into cv_f, measured on the
+// emulator, apparently reading _f as a unit.) For the same reason an
+// underscore in a person's name (X_1) reaches the CAS as ZqZ (XZqZ1): V_s
+// was read as volts times seconds.
+//
+// Live sync: the note CVREV holds a token that changes whenever CVDATA is
+// written, by this app or by the PC. The app checks it while idle and
+// reloads when the PC has written, and checks it before saving, so it never
+// writes over what the PC put there.
+//
+// Input: keys through GETKEY and touch through MOUSE, polled. A touch counts
+// when it is released, and only if it started while this screen was
+// showing, so the touch that opened the app or closed a dialog is ignored.
+//
+// CalcVault 2 adds, over the first version (same notes, so either app or
+// sync tool can be used on the same data):
+//   CVSHR    the web app's shared lines, written by the PC, only read here:
+//            STRING() of {"CVSH1", globalLines, {{folderId, lines}, ...}}.
+//            A calculator evaluates the global lines, then those of each
+//            folder from the outermost down to its own, then its own lines.
+//   CVLINK   a token the PC's online bridge changes every few seconds; while
+//            it keeps changing, the title bar says "online".
+//   CVFOCUS  "calcId;token" from the online bridge: the calculator last
+//            opened in the web app, which this app opens too (Follow the PC).
+//   CVSET    "kb=1;nap=1;follow=1;open=<calcId>;": settings, and the
+//            calculator to reopen on the next start.
+// Between polls the app sleeps in short WAITs (nap=1), so the calculator's
+// USB stack gets time to answer the PC while CalcVault is open.
+// Typing: Enter in an Eq line saves it and opens a new Eq line below; new Eq
+// lines start hidden when locked; a strip of the calculator's variable names
+// above the keyboard types one with a tap.
+
+cvLoad();
+cvSave();
+cvSaveCalc(zix);
+cvEnsure(zix);
+cvWriteIndex();
+cvNumStr(zn);
+cvStrNum(zs);
+cvNewSlot();
+cvDropNote(zix);
+cvNewId();
+cvTrim(zs);
+cvIsIdCh(zc, zfirst);
+cvIsIdent(zs);
+cvSplit(zt);
+cvMangle(zt, znames);
+cvClean(zs);
+cvTidy(zs);
+cvNames(zlines);
+cvPurge(znames);
+cvEvalLine(zline, znames);
+cvEval();
+cvGuessVar(zt);
+cvSanitize(zs);
+cvRows();
+cvDrawBrowser();
+cvDrawCalc();
+cvDraw();
+cvAsk(ztitle, zlabel, zval);
+cvConfirm(zmsg);
+cvPickFolder(ztitle, zexcl);
+cvPath(zid);
+cvFolderIx(zid);
+cvCalcIx(zid);
+cvDelFolder(zid);
+cvBrowserAct(za);
+cvCalcAct(za);
+cvEditLine(zix);
+cvAddLine();
+cvCasOp(zkind);
+cvMoveLine(zd);
+cvVisible(zix);
+cvMoreMenu();
+cvKey(zk);
+cvTap(zx, zy);
+cvNum(zv);
+cvRemoveAt(zl, zix);
+cvInsertAt(zl, zix, zv);
+cvCasName(zid);
+cvTail(zs, zi);
+cvHead(zs, zn);
+cvFind(zs, zsub);
+cvEvent(zidle);
+cvPoll();
+cvReload(zwarn);
+cvReadRev();
+cvLoadSet();
+cvSaveSet();
+cvKeyText(zk, zal, zsh);
+cvKbText(zlab);
+cvKbLabel(zlab, zpg);
+cvDrawKb(zpg);
+cvDrawBox(zt, zp, zx1, zy1, zx2, zy2, zf);
+cvDrawEdit(ztitle, zt, zp, zpg, zal, zline);
+cvEdit(ztitle, zval, zline);
+cvInline(zix);
+cvSettings();
+cvJoin(za, zb);
+cvLoadShared();
+cvSharedLines(zci);
+cvBuildPal();
+cvDrawPal(zy1, zy2);
+cvPalHit(zx, zy);
+cvNewLine(zix, zrole);
+cvEditFlow(zix, zrole);
+cvSelLine(zix);
+cvOpenCalc(zix);
+cvSetVal(zs, zkey);
+cvOnline();
+cvReadNote(zname);
+cvPollLink();
+cvBadge();
+
+// ---- state -------------------------------------------------------------
+LOCAL cvDev := "";        // device id, set by the sync tool
+LOCAL cvNext := "1";      // counter for ids made here
+LOCAL cvFo := {};         // folders
+LOCAL cvCa := {};         // calculators
+LOCAL cvView := 0;        // 0 browser, 1 calculator
+LOCAL cvCur := "0";       // folder shown in the browser
+LOCAL cvCI := 0;          // index of the open calculator in cvCa
+LOCAL cvSel := 1;         // selected row
+LOCAL cvTop := 1;         // first row on screen
+LOCAL cvRes := {};        // one result string per line of the open calc
+LOCAL cvExact := 0;       // 1 shows exact CAS results instead of decimals
+LOCAL cvQuit := 0;
+LOCAL cvRowL := {};       // rows of the current screen: {kind, index}
+LOCAL cvArmed := 0;       // 1 once the screen has been seen untouched
+LOCAL cvDown := 0;        // 1 while a counted touch is held
+LOCAL cvTx := 0;          // where it started
+LOCAL cvTy := 0;
+LOCAL cvPend := {};       // a tap that ended an in-place edit, to replay
+LOCAL cvRev := "";        // CVREV as of the last load or save
+LOCAL cvKb := 1;          // 1 shows the on-screen keyboard when editing
+LOCAL cvEdRow := 0;       // line being edited in place (locked view), or 0
+LOCAL cvEdTxt := "";
+LOCAL cvEdPos := 0;
+LOCAL cvShG := {};        // global shared lines (CVSHR)
+LOCAL cvShF := {};        // {folderId, lines} for each folder with shared lines
+LOCAL cvPal := {};        // variable palette: {label, text typed}
+LOCAL cvPalOn := 0;       // 1 while the editor shows the palette
+LOCAL cvPalS := 1;        // first palette entry on screen
+LOCAL cvPalN := 1;        // first entry of the next page
+LOCAL cvPalR := {};       // chips on screen: {x1, y1, x2, y2, entry}; entry 0 = next page
+LOCAL cvByEnter := 0;     // 1 when the last edit was finished with Enter
+LOCAL cvNap := 1;         // 1: idle in short WAITs so USB can be answered
+LOCAL cvFollow := 1;      // 1: open what the web app opens (online)
+LOCAL cvOpenId := "";     // calculator to reopen at start (CVSET open=)
+LOCAL cvLink := "";       // CVLINK as last seen
+LOCAL cvLinkT := -100000; // TICKS when it last changed
+LOCAL cvWasOn := 0;       // online as last drawn
+LOCAL cvFocus := "";      // CVFOCUS as last seen
+
+// On-screen keyboard: 5 rows of 10 keys per page. #S switches case, #F
+// goes to the functions page, #A back to letters.
+LOCAL cvKP0 := {"1","2","3","4","5","6","7","8","9","0",
+                "q","w","e","r","t","y","u","i","o","p",
+                "a","s","d","f","g","h","j","k","l","_",
+                "#S","z","x","c","v","b","n","m",",",".",
+                "#F","+","-","*","/","^","(",")","=","π"};
+LOCAL cvKP1 := {"1","2","3","4","5","6","7","8","9","0",
+                "Q","W","E","R","T","Y","U","I","O","P",
+                "A","S","D","F","G","H","J","K","L","_",
+                "#S","Z","X","C","V","B","N","M",",",".",
+                "#F","+","-","*","/","^","(",")","=","π"};
+LOCAL cvKP2 := {"sin","cos","tan","asin","acos","atan","ln","log","exp","√",
+                "abs","when","det","[","]","<",">","≤","≥","!",
+                "θ","α","β","γ","λ","μ","σ","φ","ω","Δ",
+                "x","y","z","t","k","i","e","∞",",","≠",
+                "#A","+","-","*","/","^","(",")","=","π"};
+
+// ---- storage -----------------------------------------------------------
+
+cvLoad()
+BEGIN
+  LOCAL zs, zd, zi, zc, zout, zn;
+  zs := "";
+  IFERR zs := Notes("CVDATA"); THEN zs := ""; END;
+  // A note that does not exist reads as something other than text.
+  IF TYPE(zs) <> 2 THEN zs := ""; END;
+  IF SIZE(zs) == 0 THEN
+    RETURN 1;
+  END;
+  IFERR zd := EXPR(zs); THEN zd := 0; END;
+  IF TYPE(zd) <> 6 THEN
+    // Keep what was there rather than overwrite it with an empty vault.
+    Notes("CVBAK") := zs;
+    MSGBOX("CVDATA could not be read. A copy was saved in the note CVBAK; starting empty.");
+    RETURN 0;
+  END;
+  IF SIZE(zd) < 5 THEN
+    Notes("CVBAK") := zs;
+    MSGBOX("CVDATA is not in the expected shape. A copy was saved in CVBAK.");
+    RETURN 0;
+  END;
+  cvDev := zd(2);
+  cvNext := zd(3);
+  cvFo := zd(4);
+  zout := {};
+  IF zd(1) == "CVDB1" THEN
+    // The single-note layout: give every calculator a note of its own.
+    Notes("CVBAK") := zs;
+    FOR zi FROM 1 TO SIZE(zd(5)) DO
+      zc := zd(5, zi);
+      zn := cvNumStr(zi);
+      Notes("CVC" + zn) := STRING(zc(5));
+      zout(zi) := {zc(1), zc(2), zc(3), zc(4), zc(5), zn, "m", "1"};
+    END;
+    cvCa := zout;
+    cvWriteIndex();
+    RETURN 1;
+  END;
+  FOR zi FROM 1 TO SIZE(zd(5)) DO
+    zc := zd(5, zi);
+    zout(zi) := {zc(1), zc(2), zc(3), zc(4), {}, zc(5), zc(6), "0"};
+  END;
+  cvCa := zout;
+  RETURN 1;
+END;
+
+// Reads a calculator's lines from its note, the first time it is needed.
+cvEnsure(zix)
+BEGIN
+  LOCAL zs, zl;
+  IF cvCa(zix, 8) <> "0" THEN RETURN 1; END;
+  zs := "";
+  IFERR zs := Notes("CVC" + cvCa(zix, 6)); THEN zs := ""; END;
+  IF TYPE(zs) <> 2 THEN zs := ""; END;
+  // An empty calculator's note is "{}"; no note at all means it did not
+  // arrive, and is not to be taken for an empty calculator and saved over.
+  zl := 0;
+  IF DIM(zs) > 0 THEN
+    IFERR zl := EXPR(zs); THEN zl := 0; END;
+  END;
+  IF TYPE(zl) <> 6 THEN
+    // Never saved over: the note stays as it is for the PC or a repair.
+    cvCa(zix, 5) := {};
+    cvCa(zix, 8) := "2";
+    MSGBOX("The lines of " + cvCa(zix, 3) + " could not be read (note CVC" + cvCa(zix, 6) + "). They are left untouched.");
+    cvArmed := 0; cvDown := 0;
+    RETURN 0;
+  END;
+  cvCa(zix, 5) := zl;
+  cvCa(zix, 8) := "1";
+  RETURN 1;
+END;
+
+// A whole number as digits, whatever the calculator's number format.
+cvNumStr(zn)
+BEGIN
+  LOCAL zs;
+  zs := "";
+  REPEAT
+    zs := CHAR(48 + (zn MOD 10)) + zs;
+    zn := IP(zn / 10);
+  UNTIL zn == 0;
+  RETURN zs;
+END;
+
+// The digits of a slot as a number (0 for anything else), without EXPR.
+cvStrNum(zs)
+BEGIN
+  LOCAL zi, zv, zc;
+  zv := 0;
+  FOR zi FROM 1 TO DIM(zs) DO
+    zc := zs(zi);
+    IF zc < 48 OR zc > 57 THEN RETURN 0; END;
+    zv := zv * 10 + zc - 48;
+  END;
+  RETURN zv;
+END;
+
+cvNewSlot()
+BEGIN
+  LOCAL zi, zm, zv;
+  zm := 0;
+  FOR zi FROM 1 TO SIZE(cvCa) DO
+    zv := cvStrNum(cvCa(zi, 6));
+    IF zv > zm THEN zm := zv; END;
+  END;
+  RETURN cvNumStr(zm + 1);
+END;
+
+// The index (folders, names, slots, revs), and CVREV so the PC sees it.
+cvWriteIndex()
+BEGIN
+  LOCAL zi, zc, zl;
+  zl := {};
+  FOR zi FROM 1 TO SIZE(cvCa) DO
+    zc := cvCa(zi);
+    zl(zi) := {zc(1), zc(2), zc(3), zc(4), zc(6), zc(7)};
+  END;
+  Notes("CVDATA") := STRING({"CVDB2", cvDev, cvNext, cvFo, zl});
+  cvRev := "c" + cvNumStr(TICKS) + "r" + cvNumStr(IP(RANDOM * 1000000));
+  Notes("CVREV") := cvRev;
+END;
+
+// Removes a calculator's note (when the calculator is deleted).
+cvDropNote(zix)
+BEGIN
+  IFERR Notes("CVC" + cvCa(zix, 6)) := ""; THEN END;
+END;
+
+cvReadRev()
+BEGIN
+  LOCAL zr;
+  zr := "";
+  IFERR zr := Notes("CVREV"); THEN zr := ""; END;
+  IF TYPE(zr) <> 2 THEN zr := ""; END;
+  RETURN zr;
+END;
+
+// Saves folders, names and the lock (the index), unless the PC has written
+// since it was loaded: then what the PC wrote is loaded instead, and the
+// change just made is dropped rather than written over it.
+cvSave()
+BEGIN
+  IF cvReadRev() <> cvRev THEN
+    cvReload(1);
+    RETURN 0;
+  END;
+  cvWriteIndex();
+  RETURN 1;
+END;
+
+// Saves one calculator's lines (its own note) and the index.
+cvSaveCalc(zix)
+BEGIN
+  IF cvReadRev() <> cvRev THEN
+    cvReload(1);
+    RETURN 0;
+  END;
+  IF cvCa(zix, 8) == "2" THEN
+    MSGBOX("This calculator's lines could not be read, so it is not saved.");
+    cvArmed := 0; cvDown := 0;
+    RETURN 0;
+  END;
+  Notes("CVC" + cvCa(zix, 6)) := STRING(cvCa(zix, 5));
+  // TICKS restarts at power-on, so a random part keeps revs from repeating.
+  cvCa(zix, 7) := "c" + cvNumStr(TICKS) + "r" + cvNumStr(IP(RANDOM * 1000000));
+  cvWriteIndex();
+  RETURN 1;
+END;
+
+// Called while idle: picks up what a live sync from the PC wrote, then
+// what the online bridge says.
+cvPoll()
+BEGIN
+  LOCAL zch;
+  zch := 0;
+  IF cvReadRev() <> cvRev THEN
+    cvReload(0);
+    zch := 1;
+  END;
+  IF cvPollLink() THEN zch := 1; END;
+  RETURN zch;
+END;
+
+// Reloads CVDATA, staying on the same folder or calculator if it still exists.
+cvReload(zwarn)
+BEGIN
+  LOCAL zid, zix;
+  zid := "";
+  IF cvView == 1 AND cvCI > 0 THEN zid := cvCa(cvCI, 1); END;
+  cvRev := cvReadRev();
+  cvLoad();
+  cvLoadShared();
+  IF cvCur <> "0" AND cvFolderIx(cvCur) == 0 THEN cvCur := "0"; END;
+  IF cvView == 1 THEN
+    zix := cvCalcIx(zid);
+    IF zix == 0 THEN
+      cvView := 0; cvCI := 0; cvSel := 1; cvTop := 1;
+    ELSE
+      cvCI := zix;
+      cvEnsure(cvCI);
+      cvEval();
+    END;
+  END;
+  IF zwarn THEN
+    MSGBOX("CalcVault was just updated from the computer, so your last change was not saved. Please make it again.");
+    cvArmed := 0; cvDown := 0;
+  END;
+END;
+
+cvLoadSet()
+BEGIN
+  LOCAL zs;
+  zs := "";
+  IFERR zs := Notes("CVSET"); THEN zs := ""; END;
+  IF TYPE(zs) <> 2 THEN zs := ""; END;
+  cvKb := 1;
+  IF cvFind(zs, "kb=0") > 0 THEN cvKb := 0; END;
+  cvNap := 1;
+  IF cvFind(zs, "nap=0") > 0 THEN cvNap := 0; END;
+  cvFollow := 1;
+  IF cvFind(zs, "follow=0") > 0 THEN cvFollow := 0; END;
+  cvOpenId := cvSetVal(zs, "open");
+END;
+
+// The value after "key=" in CVSET, up to the next ";".
+cvSetVal(zs, zkey)
+BEGIN
+  LOCAL zi, zt;
+  zi := cvFind(zs, zkey + "=");
+  IF zi == 0 THEN RETURN ""; END;
+  zt := cvTail(zs, zi + DIM(zkey) + 1);
+  zi := cvFind(zt, ";");
+  IF zi > 0 THEN zt := cvHead(zt, zi - 1); END;
+  RETURN zt;
+END;
+
+cvSaveSet()
+BEGIN
+  Notes("CVSET") := "kb=" + IFTE(cvKb, "1", "0") + ";nap=" + IFTE(cvNap, "1", "0") +
+                    ";follow=" + IFTE(cvFollow, "1", "0") + ";open=" + cvOpenId + ";";
+END;
+
+// A note's text, or "" when it does not exist.
+cvReadNote(zname)
+BEGIN
+  LOCAL zs;
+  zs := "";
+  IFERR zs := Notes(zname); THEN zs := ""; END;
+  IF TYPE(zs) <> 2 THEN zs := ""; END;
+  RETURN zs;
+END;
+
+// The shared lines (CVSHR). Written only by the PC; anything unreadable
+// counts as no shared lines, since nothing here is ever saved over it.
+cvLoadShared()
+BEGIN
+  LOCAL zs, zd;
+  cvShG := {};
+  cvShF := {};
+  zs := cvReadNote("CVSHR");
+  IF DIM(zs) == 0 THEN RETURN 0; END;
+  IFERR zd := EXPR(zs); THEN zd := 0; END;
+  IF TYPE(zd) <> 6 THEN RETURN 0; END;
+  IF SIZE(zd) < 3 THEN RETURN 0; END;
+  IF zd(1) <> "CVSH1" THEN RETURN 0; END;
+  cvShG := zd(2);
+  cvShF := zd(3);
+  RETURN 1;
+END;
+
+// The shared lines calculator zci sees: the global ones, then each folder's
+// from the outermost down to its own.
+cvSharedLines(zci)
+BEGIN
+  LOCAL zchain, zid, zix, zguard, zi, zj;
+  LOCAL zout;
+  zchain := {};
+  zid := cvCa(zci, 2);
+  zguard := 0;
+  WHILE zid <> "0" AND zguard < 50 DO
+    zchain := cvInsertAt(zchain, 1, zid);
+    zix := cvFolderIx(zid);
+    IF zix == 0 THEN BREAK; END;
+    zid := cvFo(zix, 2);
+    zguard := zguard + 1;
+  END;
+  zout := cvShG;
+  FOR zi FROM 1 TO SIZE(zchain) DO
+    FOR zj FROM 1 TO SIZE(cvShF) DO
+      IF cvShF(zj, 1) == zchain(zi) THEN zout := cvJoin(zout, cvShF(zj, 2)); END;
+    END;
+  END;
+  RETURN zout;
+END;
+
+// Polled while idle: the online bridge's heartbeat (CVLINK) and the
+// calculator it last opened (CVFOCUS). Answers 1 when the screen changed.
+cvPollLink()
+BEGIN
+  LOCAL zs, zi, zid, zix, zch;
+  zch := 0;
+  zs := cvReadNote("CVLINK");
+  IF zs <> cvLink THEN cvLink := zs; cvLinkT := TICKS; END;
+  IF cvOnline() <> cvWasOn THEN zch := 1; END;
+  zs := cvReadNote("CVFOCUS");
+  IF zs <> cvFocus THEN
+    cvFocus := zs;
+    zi := cvFind(zs, ";");
+    IF cvFollow AND zi > 1 THEN
+      zid := cvHead(zs, zi - 1);
+      zix := cvCalcIx(zid);
+      IF zix > 0 THEN
+        IF cvView == 0 OR cvCI <> zix THEN cvOpenCalc(zix); zch := 1; END;
+      END;
+    END;
+  END;
+  RETURN zch;
+END;
+
+// 1 while the online bridge on the PC is writing its heartbeat.
+cvOnline()
+BEGIN
+  RETURN TICKS - cvLinkT < 12000;
+END;
+
+// "online" at the right of the title bar, when it is.
+cvBadge()
+BEGIN
+  cvWasOn := cvOnline();
+  IF cvWasOn THEN
+    RECT_P(G1, 262, 3, 316, 17, RGB(60, 150, 80), RGB(60, 150, 80));
+    TEXTOUT_P("online", G1, 271, 4, 1, RGB(255, 255, 255), 44);
+  END;
+END;
+
+cvNewId()
+BEGIN
+  LOCAL zid;
+  IF SIZE(cvNext) == 0 THEN cvNext := "1"; END;
+  zid := "n" + cvNext;
+  cvNext := STRING(EXPR(cvNext) + 1);
+  RETURN zid;
+END;
+
+// ---- text helpers ------------------------------------------------------
+
+cvTrim(zs)
+BEGIN
+  LOCAL za, zb;
+  za := 1;
+  zb := DIM(zs);
+  WHILE za <= zb DO
+    IF zs(za) <> 32 THEN BREAK; END;
+    za := za + 1;
+  END;
+  WHILE zb >= za DO
+    IF zs(zb) <> 32 THEN BREAK; END;
+    zb := zb - 1;
+  END;
+  IF zb < za THEN RETURN ""; END;
+  RETURN MID(zs, za, zb - za + 1);
+END;
+
+// Letters, digits after the first character, underscore, and Greek
+// letters other than pi.
+cvIsIdCh(zc, zfirst)
+BEGIN
+  IF zc >= 65 AND zc <= 90 THEN RETURN 1; END;
+  IF zc >= 97 AND zc <= 122 THEN RETURN 1; END;
+  IF zc == 95 THEN RETURN 1; END;
+  IF zc >= 913 AND zc <= 969 AND zc <> 960 THEN RETURN 1; END;
+  IF zfirst == 0 AND zc >= 48 AND zc <= 57 THEN RETURN 1; END;
+  RETURN 0;
+END;
+
+cvIsIdent(zs)
+BEGIN
+  LOCAL zi, zn;
+  zn := DIM(zs);
+  IF zn == 0 THEN RETURN 0; END;
+  IF cvIsIdCh(zs(1), 1) == 0 OR zs(1) == 95 THEN RETURN 0; END;
+  FOR zi FROM 2 TO zn DO
+    IF cvIsIdCh(zs(zi), 0) == 0 THEN RETURN 0; END;
+  END;
+  RETURN 1;
+END;
+
+// Quotes would end the string inside CVDATA, a backslash makes the whole
+// note unreadable, and new lines have no place in a one-line field.
+cvSanitize(zs)
+BEGIN
+  zs := REPLACE(zs, CHAR(34), "'");
+  zs := REPLACE(zs, CHAR(10), " ");
+  zs := REPLACE(zs, CHAR(13), " ");
+  // A backslash anywhere makes EXPR refuse all of CVDATA.
+  zs := REPLACE(zs, CHAR(92), "/");
+  RETURN zs;
+END;
+
+// ---- equations ---------------------------------------------------------
+
+// Splits a line of text into {kind, name, params, rhs}:
+//   kind 0  an expression (or an equation that assigns nothing)
+//   kind 1  name = rhs
+//   kind 2  name(params) = rhs
+cvSplit(zt)
+BEGIN
+  LOCAL zn, zi, zc, zp, znx, zlhs;
+  LOCAL zrhs, zk;
+  LOCAL zname, zpar, zq, zok;
+  zn := DIM(zt);
+  zk := 0;
+  FOR zi FROM 1 TO zn DO
+    zc := zt(zi);
+    IF zc == 61 THEN
+      zp := 0;
+      IF zi > 1 THEN zp := zt(zi - 1); END;
+      znx := 0;
+      IF zi < zn THEN znx := zt(zi + 1); END;
+      IF znx == 61 THEN
+        zi := zi + 1;
+      ELSE
+        IF zp <> 60 AND zp <> 62 AND zp <> 33 AND zp <> 61 THEN
+          IF zp == 58 THEN
+            zlhs := MID(zt, 1, zi - 2);
+          ELSE
+            zlhs := MID(zt, 1, zi - 1);
+          END;
+          zrhs := "";
+          IF zi < zn THEN zrhs := MID(zt, zi + 1); END;
+          zk := zi;
+          BREAK;
+        END;
+      END;
+    END;
+  END;
+  IF zk == 0 THEN RETURN {0, "", "", zt}; END;
+  zlhs := cvTrim(zlhs);
+  zrhs := cvTrim(zrhs);
+  IF cvIsIdent(zlhs) THEN RETURN {1, zlhs, "", zrhs}; END;
+  // f(x, y) = ...
+  zq := cvFind(zlhs, "(");
+  IF zq > 1 AND zlhs(DIM(zlhs)) == 41 THEN
+    zname := cvTrim(MID(zlhs, 1, zq - 1));
+    zpar := MID(zlhs, zq + 1, DIM(zlhs) - zq - 1);
+    zok := cvIsIdent(zname);
+    IF zok THEN
+      zpar := REPLACE(zpar, " ", "");
+      RETURN {2, zname, zpar, zrhs};
+    END;
+  END;
+  RETURN {0, "", "", zt};
+END;
+
+// Rewrites the free names in an expression for the CAS: names in znames
+// get zcv, any other free name gets zcs. Function calls keep their names,
+// except the web app's log (base 10), which the CAS calls log10.
+cvMangle(zt, znames)
+BEGIN
+  LOCAL zn, zi, zj, zk, zc, zid;
+  LOCAL zout, zcall;
+  LOCAL zlow;
+  zn := DIM(zt);
+  zout := "";
+  zi := 1;
+  WHILE zi <= zn DO
+    zc := zt(zi);
+    IF zc >= 48 AND zc <= 57 OR zc == 46 THEN
+      // A number, with its exponent if it has one.
+      zj := zi;
+      WHILE zj <= zn DO
+        zc := zt(zj);
+        IF zc >= 48 AND zc <= 57 OR zc == 46 THEN
+          zj := zj + 1;
+        ELSE
+          IF (zc == 69 OR zc == 7431) AND zj < zn THEN
+            zk := zt(zj + 1);
+            IF zk >= 48 AND zk <= 57 OR zk == 45 OR zk == 8722 OR zk == 43 THEN
+              zj := zj + 2;
+            ELSE
+              BREAK;
+            END;
+          ELSE
+            BREAK;
+          END;
+        END;
+      END;
+      zout := zout + MID(zt, zi, zj - zi);
+      zi := zj;
+    ELSE
+      IF cvIsIdCh(zc, 1) THEN
+        zj := zi + 1;
+        WHILE zj <= zn DO
+          IF cvIsIdCh(zt(zj), 0) == 0 THEN BREAK; END;
+          zj := zj + 1;
+        END;
+        zid := MID(zt, zi, zj - zi);
+        // 2x and (a+b)x: the CAS gets the multiplication spelled out.
+        IF DIM(zout) > 0 THEN
+          zk := zout(DIM(zout));
+          IF zk >= 48 AND zk <= 57 OR zk == 41 OR zk == 46 THEN zout := zout + "*"; END;
+        END;
+        zk := zj;
+        WHILE zk <= zn DO
+          IF zt(zk) <> 32 THEN BREAK; END;
+          zk := zk + 1;
+        END;
+        zcall := 0;
+        IF zk <= zn THEN
+          IF zt(zk) == 40 THEN zcall := 1; END;
+        END;
+        IF POS(znames, zid) > 0 THEN
+          zout := zout + "zcv" + cvCasName(zid);
+        ELSE
+          IF zcall THEN
+            zlow := LOWER(zid);
+            IF zlow == "log" THEN
+              zout := zout + "log10";
+            ELSE
+              IF POS({"sin","cos","tan","asin","acos","atan","sinh","cosh","tanh","asinh","acosh","atanh","ln","exp","abs","sqrt","det","floor","ceil","ceiling","round","max","min","when","ifte"}, zlow) > 0 THEN
+                zout := zout + zlow;
+              ELSE
+                zout := zout + zid;
+              END;
+            END;
+          ELSE
+            IF POS({"pi","e","i","inf","infinity","undef"}, zid) > 0 THEN
+              zout := zout + zid;
+            ELSE
+              zout := zout + "zcs" + cvCasName(zid);
+            END;
+          END;
+        END;
+        zi := zj;
+      ELSE
+        IF zc == 960 AND DIM(zout) > 0 THEN
+          zk := zout(DIM(zout));
+          IF zk >= 48 AND zk <= 57 OR zk == 41 THEN zout := zout + "*"; END;
+        END;
+        zout := zout + MID(zt, zi, 1);
+        zi := zi + 1;
+      END;
+    END;
+  END;
+  RETURN zout;
+END;
+
+cvClean(zs)
+BEGIN
+  zs := REPLACE(zs, "zcv", "");
+  zs := REPLACE(zs, "zcs", "");
+  zs := REPLACE(zs, "ZqZ", "_");
+  RETURN zs;
+END;
+
+// A name as the CAS sees it: an underscore could be read as a unit.
+cvCasName(zid)
+BEGIN
+  RETURN REPLACE(zid, "_", "ZqZ");
+END;
+
+// INSTRING, except that an empty string is not an error (on the calculator
+// INSTRING("", ...) raises "Invalid input", measured on the emulator).
+cvFind(zs, zsub)
+BEGIN
+  IF DIM(zs) == 0 THEN RETURN 0; END;
+  RETURN INSTRING(zs, zsub);
+END;
+
+// The first zn characters, or "" for none.
+cvHead(zs, zn)
+BEGIN
+  IF zn < 1 OR DIM(zs) == 0 THEN RETURN ""; END;
+  RETURN MID(zs, 1, MIN(zn, DIM(zs)));
+END;
+
+// The text from position zi to the end, or "" past the end.
+cvTail(zs, zi)
+BEGIN
+  IF zi > DIM(zs) THEN RETURN ""; END;
+  IF zi < 1 THEN RETURN zs; END;
+  RETURN MID(zs, zi);
+END;
+
+// Every name the calculator's lines define.
+cvNames(zlines)
+BEGIN
+  LOCAL zi, zl, zs, zout;
+  zout := {};
+  FOR zi FROM 1 TO SIZE(zlines) DO
+    zl := zlines(zi);
+    IF zl(2) == "1" THEN
+      zs := cvTrim(zl(4));
+      IF cvIsIdent(zs) THEN zout(SIZE(zout) + 1) := zs; END;
+    END;
+    IF zl(2) == "0" THEN
+      zs := cvSplit(zl(6));
+      IF zs(1) > 0 THEN zout(SIZE(zout) + 1) := zs(2); END;
+    END;
+  END;
+  RETURN zout;
+END;
+
+cvPurge(znames)
+BEGIN
+  LOCAL zi, zs;
+  IF SIZE(znames) == 0 THEN RETURN 0; END;
+  zs := "";
+  FOR zi FROM 1 TO SIZE(znames) DO
+    IF zi > 1 THEN zs := zs + ","; END;
+    zs := zs + "zcv" + cvCasName(znames(zi));
+  END;
+  IFERR CAS.expr("purge(" + zs + ")"); THEN END;
+  RETURN 1;
+END;
+
+// Evaluates one line into the CAS and answers the text to show.
+cvEvalLine(zline, znames)
+BEGIN
+  LOCAL zt, zsp, zv, zfmt, zr;
+  zt := cvTrim(zline(6));
+  zfmt := "string(approx(";
+  IF cvExact THEN zfmt := "string(("; END;
+  IF zline(2) == "1" THEN
+    IF cvIsIdent(cvTrim(zline(4))) == 0 THEN RETURN "needs a variable name"; END;
+    IF SIZE(zt) == 0 THEN zt := "0"; END;
+    IFERR
+      CAS.expr("zcv" + cvCasName(cvTrim(zline(4))) + ":=(" + cvMangle(zt, znames) + ")");
+      zr := CAS.expr(zfmt + "zcv" + cvCasName(cvTrim(zline(4))) + "))");
+    THEN
+      RETURN "error";
+    END;
+  ELSE
+    IF SIZE(zt) == 0 THEN RETURN ""; END;
+    zsp := {0, "", "", zt};
+    IF zline(2) == "0" THEN zsp := cvSplit(zt); END;
+    IFERR
+      IF zsp(1) == 1 THEN
+        IF SIZE(zsp(4)) == 0 THEN RETURN ""; END;
+        CAS.expr("zcv" + cvCasName(zsp(2)) + ":=(" + cvMangle(zsp(4), znames) + ")");
+        zr := CAS.expr(zfmt + "zcv" + cvCasName(zsp(2)) + "))");
+      ELSE
+        IF zsp(1) == 2 THEN
+          IF SIZE(zsp(4)) == 0 THEN RETURN ""; END;
+          // unapply(body, params) is the form measured to work through
+          // CAS.expr (probe 2); f(x):= and (x)->... did not.
+          CAS.expr("zcv" + cvCasName(zsp(2)) + ":=unapply(" + cvMangle(zsp(4), znames) + "," + cvMangle(zsp(3), znames) + ")");
+          RETURN "function";
+        ELSE
+          zr := CAS.expr(zfmt + cvMangle(zt, znames) + "))");
+        END;
+      END;
+    THEN
+      RETURN "error";
+    END;
+  END;
+  IF TYPE(zr) <> 2 THEN zr := STRING(zr); END;
+  IF cvFind(zr, "Error") > 0 THEN RETURN "error"; END;
+  RETURN cvTidy(cvClean(zr));
+END;
+
+// approx() writes whole numbers as 12.0; show them as 12.
+cvTidy(zs)
+BEGIN
+  LOCAL zi, zn, zout, zc;
+  // Drop ".0" after a digit when no digit follows: 12.0 and 3.0+y, not 10.05.
+  zn := DIM(zs);
+  zout := "";
+  zi := 1;
+  WHILE zi <= zn DO
+    zc := zs(zi);
+    IF zc == 46 AND zi > 1 AND zi < zn THEN
+      IF zs(zi + 1) == 48 AND zs(zi - 1) >= 48 AND zs(zi - 1) <= 57 THEN
+        IF zi + 1 == zn THEN
+          RETURN zout;
+        END;
+        IF zs(zi + 2) < 48 OR zs(zi + 2) > 57 THEN
+          zi := zi + 2;
+          CONTINUE;
+        END;
+      END;
+    END;
+    zout := zout + MID(zs, zi, 1);
+    zi := zi + 1;
+  END;
+  RETURN zout;
+END;
+
+cvEval()
+BEGIN
+  LOCAL zlines, znames, zi, zsh;
+  cvRes := {};
+  IF cvCI < 1 THEN RETURN 0; END;
+  zlines := cvCa(cvCI, 5);
+  // Shared lines first, as in the web app; their results are not shown,
+  // and an Output among them has nothing to do.
+  zsh := cvSharedLines(cvCI);
+  znames := cvNames(cvJoin(zsh, zlines));
+  cvPurge(znames);
+  FOR zi FROM 1 TO SIZE(zsh) DO
+    IF zsh(zi, 2) <> "2" THEN cvEvalLine(zsh(zi), znames); END;
+  END;
+  FOR zi FROM 1 TO SIZE(zlines) DO
+    cvRes(zi) := cvEvalLine(zlines(zi), znames);
+  END;
+  cvPurge(znames);
+  RETURN 1;
+END;
+
+// The first free name in an expression, for d/dx and the integral.
+cvGuessVar(zt)
+BEGIN
+  LOCAL zm, zi, zj, zn;
+  zm := cvMangle(zt, {});
+  zi := cvFind(zm, "zcs");
+  IF zi == 0 THEN RETURN "x"; END;
+  zj := zi + 3;
+  zn := DIM(zm);
+  WHILE zj <= zn DO
+    IF cvIsIdCh(zm(zj), 0) == 0 THEN BREAK; END;
+    zj := zj + 1;
+  END;
+  RETURN REPLACE(MID(zm, zi + 3, zj - zi - 3), "ZqZ", "_");
+END;
+
+// ---- list helpers ------------------------------------------------------
+
+// The elements of za, then those of zb.
+cvJoin(za, zb)
+BEGIN
+  LOCAL zi, zout;
+  zout := za;
+  FOR zi FROM 1 TO SIZE(zb) DO zout(SIZE(zout) + 1) := zb(zi); END;
+  RETURN zout;
+END;
+
+cvRemoveAt(zl, zix)
+BEGIN
+  LOCAL zi, zout;
+  zout := {};
+  FOR zi FROM 1 TO SIZE(zl) DO
+    IF zi <> zix THEN zout(SIZE(zout) + 1) := zl(zi); END;
+  END;
+  RETURN zout;
+END;
+
+cvInsertAt(zl, zix, zv)
+BEGIN
+  LOCAL zi, zout;
+  zout := {};
+  FOR zi FROM 1 TO SIZE(zl) DO
+    IF zi == zix THEN zout(SIZE(zout) + 1) := zv; END;
+    zout(SIZE(zout) + 1) := zl(zi);
+  END;
+  IF zix > SIZE(zl) THEN zout(SIZE(zout) + 1) := zv; END;
+  RETURN zout;
+END;
+
+cvFolderIx(zid)
+BEGIN
+  LOCAL zi;
+  FOR zi FROM 1 TO SIZE(cvFo) DO
+    IF cvFo(zi, 1) == zid THEN RETURN zi; END;
+  END;
+  RETURN 0;
+END;
+
+cvCalcIx(zid)
+BEGIN
+  LOCAL zi;
+  FOR zi FROM 1 TO SIZE(cvCa) DO
+    IF cvCa(zi, 1) == zid THEN RETURN zi; END;
+  END;
+  RETURN 0;
+END;
+
+cvPath(zid)
+BEGIN
+  LOCAL zs, zix, zguard;
+  zs := "";
+  zguard := 0;
+  WHILE zid <> "0" AND zguard < 50 DO
+    zix := cvFolderIx(zid);
+    IF zix == 0 THEN BREAK; END;
+    zs := "/" + cvFo(zix, 3) + zs;
+    zid := cvFo(zix, 2);
+    zguard := zguard + 1;
+  END;
+  IF SIZE(zs) == 0 THEN RETURN "/"; END;
+  RETURN zs;
+END;
+
+// Deletes a folder with everything inside it, like the web app.
+cvDelFolder(zid)
+BEGIN
+  LOCAL zi, zkids;
+  zkids := {};
+  FOR zi FROM 1 TO SIZE(cvFo) DO
+    IF cvFo(zi, 2) == zid THEN zkids(SIZE(zkids) + 1) := cvFo(zi, 1); END;
+  END;
+  FOR zi FROM 1 TO SIZE(zkids) DO
+    cvDelFolder(zkids(zi));
+  END;
+  zi := SIZE(cvCa);
+  WHILE zi >= 1 DO
+    IF cvCa(zi, 2) == zid THEN
+      cvDropNote(zi);
+      cvCa := cvRemoveAt(cvCa, zi);
+    END;
+    zi := zi - 1;
+  END;
+  zi := cvFolderIx(zid);
+  IF zi > 0 THEN cvFo := cvRemoveAt(cvFo, zi); END;
+END;
+
+// ---- screens -----------------------------------------------------------
+
+// Rows of the current screen, each {kind, index}: kind 1 folder, 2 calc,
+// 3 line. Folders first, then calculators, each by name.
+cvRows()
+BEGIN
+  LOCAL zi, zj, zout, zf, zc, zt;
+  zout := {};
+  IF cvView == 0 THEN
+    zf := {};
+    FOR zi FROM 1 TO SIZE(cvFo) DO
+      IF cvFo(zi, 2) == cvCur THEN zf(SIZE(zf) + 1) := {UPPER(cvFo(zi, 3)), zi}; END;
+    END;
+    zc := {};
+    FOR zi FROM 1 TO SIZE(cvCa) DO
+      IF cvCa(zi, 2) == cvCur THEN zc(SIZE(zc) + 1) := {UPPER(cvCa(zi, 3)), zi}; END;
+    END;
+    // Insertion sorts by name; folders hold a handful of entries.
+    FOR zi FROM 2 TO SIZE(zf) DO
+      zj := zi;
+      WHILE zj > 1 DO
+        IF zf(zj - 1, 1) <= zf(zj, 1) THEN BREAK; END;
+        zt := zf(zj); zf(zj) := zf(zj - 1); zf(zj - 1) := zt;
+        zj := zj - 1;
+      END;
+    END;
+    FOR zi FROM 2 TO SIZE(zc) DO
+      zj := zi;
+      WHILE zj > 1 DO
+        IF zc(zj - 1, 1) <= zc(zj, 1) THEN BREAK; END;
+        zt := zc(zj); zc(zj) := zc(zj - 1); zc(zj - 1) := zt;
+        zj := zj - 1;
+      END;
+    END;
+    FOR zi FROM 1 TO SIZE(zf) DO zout(SIZE(zout) + 1) := {1, zf(zi, 2)}; END;
+    FOR zi FROM 1 TO SIZE(zc) DO zout(SIZE(zout) + 1) := {2, zc(zi, 2)}; END;
+  ELSE
+    FOR zi FROM 1 TO SIZE(cvCa(cvCI, 5)) DO
+      IF cvVisible(zi) THEN zout(SIZE(zout) + 1) := {3, zi}; END;
+    END;
+  END;
+  cvRowL := zout;
+  IF cvSel > SIZE(zout) THEN cvSel := SIZE(zout); END;
+  IF cvSel < 1 THEN cvSel := 1; END;
+  RETURN zout;
+END;
+
+// Locked calculators hide the Eq lines marked hidden.
+cvVisible(zix)
+BEGIN
+  LOCAL zl;
+  IF cvCa(cvCI, 4) <> "1" THEN RETURN 1; END;
+  zl := cvCa(cvCI, 5, zix);
+  IF zl(2) == "0" AND zl(3) == "1" THEN RETURN 0; END;
+  RETURN 1;
+END;
+
+cvDrawBrowser()
+BEGIN
+  LOCAL zi, zr, zy, zn, zfg, zrow;
+  RECT_P(G1, 0, 0, 319, 20, RGB(40, 70, 120), RGB(40, 70, 120));
+  TEXTOUT_P("CalcVault " + cvPath(cvCur), G1, 4, 3, 2, RGB(255, 255, 255), IFTE(cvOnline(), 254, 312));
+  cvBadge();
+  zn := SIZE(cvRowL);
+  IF zn == 0 THEN
+    TEXTOUT_P("Empty. Tap New to add a folder or calculator.", G1, 6, 40, 2, RGB(110, 110, 110), 308);
+  END;
+  IF cvSel < cvTop THEN cvTop := cvSel; END;
+  IF cvSel > cvTop + 7 THEN cvTop := cvSel - 7; END;
+  FOR zi FROM cvTop TO MIN(zn, cvTop + 7) DO
+    zy := 22 + (zi - cvTop) * 24;
+    zrow := cvRowL(zi);
+    zfg := RGB(0, 0, 0);
+    IF zi == cvSel THEN
+      RECT_P(G1, 0, zy, 319, zy + 22, RGB(200, 220, 255), RGB(200, 220, 255));
+    END;
+    IF zrow(1) == 1 THEN
+      // A small folder: tab and body.
+      RECT_P(G1, 6, zy + 5, 13, zy + 8, RGB(214, 160, 40), RGB(214, 160, 40));
+      RECT_P(G1, 6, zy + 8, 21, zy + 18, RGB(214, 160, 40), RGB(240, 190, 70));
+      TEXTOUT_P(cvFo(zrow(2), 3), G1, 28, zy + 4, 3, RGB(30, 60, 140), 286);
+    ELSE
+      zr := TEXTOUT_P(cvCa(zrow(2), 3), G1, 28, zy + 4, 3, zfg, 286);
+      IF cvCa(zrow(2), 4) == "1" AND zr < 260 THEN
+        TEXTOUT_P("locked", G1, zr + 8, zy + 7, 1, RGB(130, 130, 130), 312 - zr);
+      END;
+    END;
+  END;
+END;
+
+cvDrawCalc()
+BEGIN
+  LOCAL zi, zy, zn, zl, zt, zres;
+  LOCAL zlock, zrow, zcol, zr;
+  zlock := cvCa(cvCI, 4) == "1";
+  RECT_P(G1, 0, 0, 319, 20, RGB(40, 70, 120), RGB(40, 70, 120));
+  zt := cvCa(cvCI, 3);
+  IF zlock THEN zt := zt + "  [locked]"; END;
+  IF cvExact THEN zt := zt + "  exact"; END;
+  TEXTOUT_P(zt, G1, 4, 3, 2, RGB(255, 255, 255), IFTE(cvOnline(), 254, 312));
+  cvBadge();
+  zn := SIZE(cvRowL);
+  IF zn == 0 THEN
+    TEXTOUT_P(IFTE(zlock, "No lines.", "No lines. Press Enter to type an equation."), G1, 6, 40, 2, RGB(110, 110, 110), 308);
+  END;
+  IF cvSel < cvTop THEN cvTop := cvSel; END;
+  IF cvSel > cvTop + 4 THEN cvTop := cvSel - 4; END;
+  FOR zi FROM cvTop TO MIN(zn, cvTop + 4) DO
+    zy := 22 + (zi - cvTop) * 38;
+    zrow := cvRowL(zi);
+    zl := cvCa(cvCI, 5, zrow(2));
+    zres := "";
+    IF zrow(2) <= SIZE(cvRes) THEN zres := cvRes(zrow(2)); END;
+    IF zi == cvSel THEN
+      RECT_P(G1, 0, zy, 319, zy + 36, RGB(200, 220, 255), RGB(200, 220, 255));
+    END;
+    zcol := RGB(0, 0, 0);
+    IF zlock THEN
+      // Locked: the label (or the equation) above, the value below.
+      zt := zl(5);
+      IF zl(2) == "0" THEN zt := zl(6); END;
+      IF zl(2) == "1" AND SIZE(zt) == 0 THEN zt := zl(4); END;
+      TEXTOUT_P(zt, G1, 6, zy + 2, 2, RGB(90, 90, 90), 308);
+      IF zl(2) == "1" THEN
+        IF cvEdRow == zrow(2) THEN
+          cvDrawBox(cvEdTxt, cvEdPos, 12, zy + 16, 316, zy + 34, 3);
+        ELSE
+          RECT_P(G1, 12, zy + 16, 316, zy + 34, RGB(150, 170, 210), RGB(255, 255, 255));
+          TEXTOUT_P(zl(6), G1, 16, zy + 17, 3, RGB(20, 40, 120), 296);
+        END;
+      ELSE
+        TEXTOUT_P(zres, G1, 14, zy + 17, 3, RGB(0, 0, 0), 300);
+      END;
+    ELSE
+      CASE
+        IF zl(2) == "1" THEN zt := "In  " + zl(5) + "  [" + zl(4) + "] = " + zl(6); END;
+        IF zl(2) == "2" THEN zt := "Out " + zl(5) + ":  " + zl(6); END;
+        DEFAULT zt := zl(6);
+      END;
+      // Eq lines start hidden when locked, so the ones that show are marked.
+      zr := 6;
+      IF zl(2) == "0" AND zl(3) <> "1" THEN
+        RECT_P(G1, 4, zy + 3, 37, zy + 15, RGB(60, 150, 80), RGB(225, 245, 230));
+        TEXTOUT_P("shown", G1, 8, zy + 4, 1, RGB(30, 110, 50), 28);
+        zr := 42;
+      END;
+      TEXTOUT_P(zt, G1, zr, zy + 2, 2, zcol, 314 - zr);
+      IF SIZE(zres) > 0 THEN
+        zcol := RGB(20, 100, 40);
+        IF zres == "error" THEN zcol := RGB(190, 30, 30); END;
+        TEXTOUT_P("= " + zres, G1, 20, zy + 18, 2, zcol, 294);
+      END;
+    END;
+    LINE_P(G1, 0, zy + 37, 319, zy + 37, RGB(225, 225, 225));
+  END;
+END;
+
+cvDraw()
+BEGIN
+  cvRows();
+  DIMGROB_P(G1, 320, 240, RGB(255, 255, 255));
+  IF cvView == 0 THEN
+    cvDrawBrowser();
+  ELSE
+    cvDrawCalc();
+  END;
+  BLIT_P(G0, G1);
+  IF cvView == 0 THEN
+    DRAWMENU("Open", "New", "Name", "Move", "Del", "Exit");
+  ELSE
+    IF cvCa(cvCI, 4) == "1" THEN
+      DRAWMENU("Edit", "", "", "Unlck", "Menu", "Back");
+    ELSE
+      DRAWMENU("Edit", "+Line", "Del", "Lock", "Menu", "Back");
+    END;
+  END;
+END;
+
+// ---- the editor ---------------------------------------------------------
+
+// A text box with its cursor (after zp characters), scrolled so the cursor
+// shows. Drawn on G1; G2 is used to measure text.
+cvDrawBox(zt, zp, zx1, zy1, zx2, zy2, zf)
+BEGIN
+  LOCAL zs, zw, zmax;
+  RECT_P(G1, zx1, zy1, zx2, zy2, RGB(200, 60, 40), RGB(255, 255, 250));
+  zmax := zx2 - zx1 - 12;
+  DIMGROB_P(G2, 320, 30, RGB(255, 255, 255));
+  zs := 0;
+  zw := TEXTOUT_P(cvHead(zt, zp), G2, 0, 0, zf, 0, 320);
+  WHILE zw > zmax AND zs < zp DO
+    zs := zs + 3;
+    IF zs > zp THEN zs := zp; END;
+    zw := TEXTOUT_P(cvHead(cvTail(zt, zs + 1), zp - zs), G2, 0, 0, zf, 0, 320);
+  END;
+  TEXTOUT_P(cvTail(zt, zs + 1), G1, zx1 + 4, zy1 + 2, zf, RGB(20, 40, 120), zx2 - zx1 - 8);
+  RECT_P(G1, zx1 + 4 + zw, zy1 + 2, zx1 + 5 + zw, zy2 - 2, RGB(200, 60, 40), RGB(200, 60, 40));
+END;
+
+cvKbLabel(zlab, zpg)
+BEGIN
+  IF zlab == "#S" THEN RETURN IFTE(zpg == 1, "abc", "ABC"); END;
+  IF zlab == "#F" THEN RETURN "fn"; END;
+  IF zlab == "#A" THEN RETURN "abc"; END;
+  RETURN zlab;
+END;
+
+// The keyboard fills y 102..212, above the soft keys.
+cvDrawKb(zpg)
+BEGIN
+  LOCAL zi, zr, zc, zx, zy, zl;
+  LOCAL zkeys, zfill;
+  zkeys := cvKP0;
+  IF zpg == 1 THEN zkeys := cvKP1; END;
+  IF zpg == 2 THEN zkeys := cvKP2; END;
+  RECT_P(G1, 0, 101, 319, 212, RGB(70, 76, 88), RGB(70, 76, 88));
+  FOR zi FROM 1 TO 50 DO
+    zr := FLOOR((zi - 1) / 10);
+    zc := zi - 1 - zr * 10;
+    zx := zc * 32;
+    zy := 102 + zr * 22;
+    zl := cvKbLabel(zkeys(zi), zpg);
+    zfill := RGB(245, 245, 248);
+    IF LEFT(zkeys(zi), 1) == "#" THEN zfill := RGB(190, 205, 230); END;
+    RECT_P(G1, zx + 1, zy + 1, zx + 30, zy + 20, RGB(120, 128, 140), zfill);
+    TEXTOUT_P(zl, G1, zx + MAX(2, FLOOR((31 - 6 * DIM(zl)) / 2)), zy + 4, 2, RGB(0, 0, 0), 29);
+  END;
+END;
+
+// What a keyboard key types.
+cvKbText(zlab)
+BEGIN
+  IF POS({"sin","cos","tan","asin","acos","atan","ln","log","exp","abs","when","det"}, zlab) > 0 THEN
+    RETURN zlab + "(";
+  END;
+  IF zlab == "√" THEN RETURN "sqrt("; END;
+  IF zlab == "≤" THEN RETURN "<="; END;
+  IF zlab == "≥" THEN RETURN ">="; END;
+  IF zlab == "∞" THEN RETURN "inf"; END;
+  IF zlab == "≠" THEN RETURN "!="; END;
+  RETURN zlab;
+END;
+
+// What a calculator key types in the editor. zal: 0 normal, 1 ALPHA
+// (capitals), 2 Shift+ALPHA (small letters). zsh: Shift was pressed first.
+cvKeyText(zk, zal, zsh)
+BEGIN
+  LOCAL zi, zs, zl;
+  IF zal > 0 THEN
+    zi := POS({14,15,16,17,18,20,21,22,23,24,25,26,27,28,29,31,32,33,34,35,37,38,39,40,42,43}, zk);
+    IF zi > 0 THEN
+      zs := MID("ABCDEFGHIJKLMNOPQRSTUVWXYZ", zi, 1);
+      IF zal == 2 THEN zs := LOWER(zs); END;
+      RETURN zs;
+    END;
+  END;
+  IF zsh THEN
+    zi := POS({28,21,22,23,24,25,49,48,26,50}, zk);
+    IF zi > 0 THEN
+      zl := {")","asin(","acos(","atan(","exp(","10^","_","=","sqrt(","+"};
+      RETURN zl(zi);
+    END;
+  END;
+  zi := POS({47,42,43,44,37,38,39,32,33,34,48,50,45,40,35,20,26,28,27,29,31,17,16,18,49,21,22,23,24,25}, zk);
+  IF zi > 0 THEN
+    zl := {"0","1","2","3","4","5","6","7","8","9",".","+","-","*","/","^","^2","(","-",",","E","x","_","/"," ","sin(","cos(","tan(","ln(","log("};
+    RETURN zl(zi);
+  END;
+  RETURN "";
+END;
+
+cvDrawEdit(ztitle, zt, zp, zpg, zal, zline)
+BEGIN
+  LOCAL zs;
+  DIMGROB_P(G1, 320, 240, RGB(255, 255, 255));
+  IF zline > 0 THEN
+    cvEdTxt := zt;
+    cvEdPos := zp;
+    cvDrawCalc();
+  ELSE
+    RECT_P(G1, 0, 0, 319, 20, RGB(40, 70, 120), RGB(40, 70, 120));
+    TEXTOUT_P(ztitle, G1, 4, 3, 2, RGB(255, 255, 255), 312);
+    cvDrawBox(zt, zp, 6, 28, 313, 54, 3);
+    IF cvPalOn THEN
+      // The calculator's variables, one tap each, between the box and the
+      // keyboard (or down to the soft keys when the keyboard is hidden).
+      IF cvKb THEN
+        cvDrawPal(58, 100);
+      ELSE
+        TEXTOUT_P("Tap a name to type it.  ALPHA: capitals", G1, 6, 58, 1, RGB(110, 110, 110), 308);
+        cvDrawPal(72, 210);
+      END;
+    ELSE
+      zs := "Enter: done   Esc: cancel   Units key: _";
+      TEXTOUT_P(zs, G1, 6, 62, 1, RGB(110, 110, 110), 308);
+      TEXTOUT_P("ALPHA: capitals   Shift ALPHA: small letters", G1, 6, 76, 1, RGB(110, 110, 110), 308);
+    END;
+  END;
+  IF zal > 0 THEN
+    RECT_P(G1, 276, 2, 316, 18, RGB(240, 190, 70), RGB(240, 190, 70));
+    TEXTOUT_P(IFTE(zal == 1, "ABC", "abc"), G1, 282, 4, 2, RGB(0, 0, 0), 32);
+  END;
+  IF cvKb THEN cvDrawKb(zpg); END;
+  BLIT_P(G0, G1);
+  DRAWMENU("Cancel", "<", ">", "Del", IFTE(cvKb, "Hide", "Keys"), "OK");
+END;
+
+// Edits text. zline 0: on its own screen, titled ztitle. zline > 0: in
+// place, in that Input line's box on the locked calculator; a touch outside
+// the box finishes the edit and is replayed (cvPend). Answers the text, or
+// the number 0 when cancelled.
+cvEdit(ztitle, zval, zline)
+BEGIN
+  LOCAL zt, zp, zpg, zal, zsh, ze;
+  LOCAL zk, zs, zr, zx, zy, zlab;
+  LOCAL zby, zi, zkeys;
+  LOCAL zc;
+  zt := zval; zp := DIM(zt); zpg := 0; zal := 0; zsh := 0; zr := 0;
+  cvByEnter := 0;
+  cvPalS := 1;
+  zby := -1;
+  IF zline > 0 THEN
+    FOR zi FROM 1 TO SIZE(cvRowL) DO
+      IF cvRowL(zi, 2) == zline THEN zby := 22 + (zi - cvTop) * 38 + 16; END;
+    END;
+  END;
+  cvArmed := 0; cvDown := 0;
+  REPEAT
+    cvDrawEdit(ztitle, zt, zp, zpg, zal, zline);
+    ze := cvEvent(0);
+    zs := "";
+    IF ze(1) == 1 THEN
+      zk := ze(2);
+      CASE
+        IF zk == 30 THEN zr := 1; cvByEnter := 1; END;
+        IF zk == 4 THEN zr := -1; END;
+        IF zk == 7 THEN zp := MAX(0, zp - 1); END;
+        IF zk == 8 THEN zp := MIN(DIM(zt), zp + 1); END;
+        IF zk == 2 THEN zp := 0; END;
+        IF zk == 12 THEN zp := DIM(zt); END;
+        IF zk == 19 THEN
+          IF zp > 0 THEN zt := cvHead(zt, zp - 1) + cvTail(zt, zp + 1); zp := zp - 1; END;
+        END;
+        IF zk == 41 THEN zsh := 1 - zsh; END;
+        IF zk == 36 THEN
+          IF zsh THEN zal := 2; ELSE zal := IFTE(zal == 0, 1, 0); END;
+          zsh := 0;
+        END;
+        DEFAULT
+          zs := cvKeyText(zk, zal, zsh);
+          zsh := 0;
+      END;
+    END;
+    IF ze(1) == 2 THEN
+      zx := ze(2); zy := ze(3);
+      IF zy >= 213 THEN
+        zi := MIN(6, FLOOR(zx / 53.34) + 1);
+        CASE
+          IF zi == 1 THEN zr := -1; END;
+          IF zi == 2 THEN zp := MAX(0, zp - 1); END;
+          IF zi == 3 THEN zp := MIN(DIM(zt), zp + 1); END;
+          IF zi == 4 THEN
+            IF zp > 0 THEN zt := cvHead(zt, zp - 1) + cvTail(zt, zp + 1); zp := zp - 1; END;
+          END;
+          IF zi == 5 THEN cvKb := 1 - cvKb; cvSaveSet(); END;
+          IF zi == 6 THEN zr := 1; END;
+        END;
+      ELSE
+        zi := -1;
+        IF zline == 0 AND cvPalOn THEN zi := cvPalHit(zx, zy); END;
+        IF zi == 0 THEN cvPalS := cvPalN; END;
+        IF zi > 0 THEN
+          zs := cvPal(zi, 2);
+          // Right after a name or a ")" the tapped name is multiplied, not
+          // run together with it into one longer name.
+          IF zp > 0 THEN
+            zc := zt(zp);
+            IF cvIsIdCh(zc, 0) OR zc == 41 THEN zs := "*" + zs; END;
+          END;
+        END;
+        IF zi < 0 THEN
+          IF cvKb AND zy >= 102 THEN
+            zkeys := cvKP0;
+            IF zpg == 1 THEN zkeys := cvKP1; END;
+            IF zpg == 2 THEN zkeys := cvKP2; END;
+            zi := MIN(4, FLOOR((zy - 102) / 22)) * 10 + MIN(9, FLOOR(zx / 32)) + 1;
+            zlab := zkeys(zi);
+            CASE
+              IF zlab == "#S" THEN zpg := IFTE(zpg == 1, 0, 1); END;
+              IF zlab == "#F" THEN zpg := 2; END;
+              IF zlab == "#A" THEN zpg := 0; END;
+              DEFAULT zs := cvKbText(zlab);
+            END;
+          ELSE
+            IF zline > 0 AND (zy < zby OR zy > zby + 18) THEN
+              // A touch elsewhere on the calculator: done, and let it act.
+              cvPend := {zx, zy};
+              zr := 1;
+            END;
+          END;
+        END;
+      END;
+    END;
+    IF DIM(zs) > 0 THEN
+      zt := cvHead(zt, zp) + zs + cvTail(zt, zp + 1);
+      zp := zp + DIM(zs);
+    END;
+  UNTIL zr <> 0;
+  cvArmed := 0; cvDown := 0;
+  // The palette is for the one edit it was asked for.
+  cvPalOn := 0;
+  IF zr < 0 THEN RETURN 0; END;
+  RETURN cvTrim(cvSanitize(zt));
+END;
+
+// Edits an Input line's value in its own box on the locked calculator.
+// Enter moves on to the next Input box, so a column of values is typed
+// without touching the screen.
+cvInline(zix)
+BEGIN
+  LOCAL zl, zs, zr, zgo;
+  zgo := 1;
+  WHILE zgo DO
+    zgo := 0;
+    FOR zr FROM 1 TO SIZE(cvRowL) DO
+      IF cvRowL(zr, 2) == zix THEN cvSel := zr; END;
+    END;
+    // With the keyboard up only the first two rows show.
+    IF cvSel < cvTop THEN cvTop := cvSel; END;
+    IF cvKb AND cvSel > cvTop + 1 THEN cvTop := cvSel - 1; END;
+    zl := cvCa(cvCI, 5, zix);
+    cvEdRow := zix;
+    zs := cvEdit(zl(5), zl(6), zix);
+    cvEdRow := 0;
+    IF TYPE(zs) <> 2 THEN RETURN 1; END;
+    IF zs <> zl(6) THEN
+      cvCa(cvCI, 5, zix, 6) := zs;
+      IF cvSaveCalc(cvCI) == 0 THEN RETURN 1; END;
+      cvEval();
+    END;
+    IF cvByEnter THEN
+      cvRows();
+      FOR zr FROM cvSel + 1 TO SIZE(cvRowL) DO
+        IF zgo == 0 THEN
+          IF cvCa(cvCI, 5, cvRowL(zr, 2), 2) == "1" THEN zix := cvRowL(zr, 2); zgo := 1; END;
+        END;
+      END;
+    END;
+  END;
+  RETURN 1;
+END;
+
+// ---- variable palette --------------------------------------------------
+
+// The names the open calculator can use, its own first, then the shared
+// ones: {label, text typed}; a function f types "f(".
+cvBuildPal()
+BEGIN
+  LOCAL zall, zi, zl, zs, zins, zsp;
+  LOCAL zlabs, zout;
+  zall := cvJoin(cvCa(cvCI, 5), cvSharedLines(cvCI));
+  zlabs := {};
+  zout := {};
+  FOR zi FROM 1 TO SIZE(zall) DO
+    zl := zall(zi);
+    zs := "";
+    IF zl(2) == "1" THEN
+      zs := cvTrim(zl(4));
+      IF cvIsIdent(zs) == 0 THEN zs := ""; END;
+      zins := zs;
+    END;
+    IF zl(2) == "0" THEN
+      zsp := cvSplit(zl(6));
+      IF zsp(1) == 1 THEN zs := zsp(2); zins := zs; END;
+      IF zsp(1) == 2 THEN zs := zsp(2) + "()"; zins := zsp(2) + "("; END;
+    END;
+    IF DIM(zs) > 0 THEN
+      IF POS(zlabs, zs) == 0 THEN
+        zlabs(SIZE(zlabs) + 1) := zs;
+        zout(SIZE(zout) + 1) := {zs, zins};
+      END;
+    END;
+  END;
+  cvPal := zout;
+  cvPalS := 1;
+END;
+
+// Draws the palette's chips from entry cvPalS in rows between y zy1 and
+// zy2, and records where they are (cvPalR). When they do not all fit, a
+// last chip turns the page; on the last page it goes back to the first.
+cvDrawPal(zy1, zy2)
+BEGIN
+  LOCAL zi, zn, zx, zy, zw, zlab;
+  LOCAL zrows, zrow;
+  LOCAL zlim;
+  cvPalR := {};
+  zn := SIZE(cvPal);
+  IF zn == 0 THEN
+    TEXTOUT_P("Names this calculator defines show here, to tap.", G1, 6, zy1 + 4, 1, RGB(130, 130, 130), 308);
+    RETURN 0;
+  END;
+  IF cvPalS < 1 OR cvPalS > zn THEN cvPalS := 1; END;
+  zrows := FLOOR((zy2 - zy1 - 18) / 21) + 1;
+  DIMGROB_P(G2, 320, 30, RGB(255, 255, 255));
+  zx := 2; zrow := 0; zi := cvPalS;
+  WHILE zi <= zn DO
+    zlab := cvPal(zi, 1);
+    zw := TEXTOUT_P(zlab, G2, 0, 0, 2, 0, 300) + 10;
+    IF zw < 26 THEN zw := 26; END;
+    // The last row keeps room for the page chip.
+    zlim := 318;
+    IF zrow == zrows - 1 THEN zlim := 288; END;
+    IF zw > zlim - 2 THEN zw := zlim - 2; END;
+    IF zx + zw > zlim THEN
+      IF zrow == zrows - 1 THEN BREAK; END;
+      zrow := zrow + 1;
+      zx := 2;
+    ELSE
+      zy := zy1 + zrow * 21;
+      RECT_P(G1, zx, zy, zx + zw - 3, zy + 18, RGB(214, 160, 40), RGB(255, 244, 214));
+      TEXTOUT_P(zlab, G1, zx + 4, zy + 3, 2, RGB(0, 0, 0), zw - 6);
+      cvPalR(SIZE(cvPalR) + 1) := {zx, zy, zx + zw - 3, zy + 18, zi};
+      zx := zx + zw;
+      zi := zi + 1;
+    END;
+  END;
+  cvPalN := IFTE(zi > zn, 1, zi);
+  IF cvPalN > 1 OR cvPalS > 1 THEN
+    zy := zy1 + (zrows - 1) * 21;
+    RECT_P(G1, 292, zy, 317, zy + 18, RGB(40, 70, 120), RGB(200, 220, 255));
+    TEXTOUT_P(IFTE(cvPalN > 1, ">>", "<<"), G1, 297, zy + 3, 2, RGB(20, 40, 120), 18);
+    cvPalR(SIZE(cvPalR) + 1) := {292, zy, 317, zy + 18, 0};
+  END;
+  RETURN 1;
+END;
+
+// The palette entry under a touch, 0 for the page chip, -1 for none.
+cvPalHit(zx, zy)
+BEGIN
+  LOCAL zi, zr;
+  FOR zi FROM 1 TO SIZE(cvPalR) DO
+    zr := cvPalR(zi);
+    IF zx >= zr(1) AND zx <= zr(3) AND zy >= zr(2) AND zy <= zr(4) THEN RETURN zr(5); END;
+  END;
+  RETURN -1;
+END;
+
+// ---- dialogs -----------------------------------------------------------
+
+// One line of text. Answers the new text, or the number 0 when cancelled.
+cvAsk(ztitle, zlabel, zval)
+BEGIN
+  IF SIZE(zlabel) > 0 THEN ztitle := ztitle + ": " + zlabel; END;
+  RETURN cvEdit(ztitle, zval, 0);
+END;
+
+cvSettings()
+BEGIN
+  LOCAL zc;
+  zc := 0;
+  CHOOSE(zc, "Settings", IFTE(cvKb, "On-screen keyboard: on", "On-screen keyboard: off"),
+         IFTE(cvNap, "Let the PC sync while open: on", "Let the PC sync while open: off"),
+         IFTE(cvFollow, "Follow the web app: on", "Follow the web app: off"));
+  cvArmed := 0; cvDown := 0;
+  IF zc == 1 THEN cvKb := 1 - cvKb; END;
+  IF zc == 2 THEN cvNap := 1 - cvNap; END;
+  IF zc == 3 THEN cvFollow := 1 - cvFollow; END;
+  IF zc >= 1 THEN cvSaveSet(); END;
+END;
+
+cvConfirm(zmsg)
+BEGIN
+  LOCAL zc;
+  zc := 0;
+  CHOOSE(zc, zmsg, "Cancel", "Yes, delete");
+  cvArmed := 0; cvDown := 0;
+  RETURN zc == 2;
+END;
+
+// Lets the person pick a folder; answers its id, "0" for the top level, or
+// "" when cancelled. Folders inside zexcl (a folder being moved) are left out.
+cvPickFolder(ztitle, zexcl)
+BEGIN
+  LOCAL zi, zids, znames, zc, zp, zok;
+  LOCAL zguard;
+  zids := {"0"};
+  znames := {"/ (top level)"};
+  FOR zi FROM 1 TO SIZE(cvFo) DO
+    zok := 1;
+    zp := cvFo(zi, 1);
+    zguard := 0;
+    WHILE zp <> "0" AND zguard < 50 DO
+      IF zp == zexcl THEN zok := 0; BREAK; END;
+      zp := cvFo(cvFolderIx(zp), 2);
+      zguard := zguard + 1;
+    END;
+    IF zok THEN
+      zids(SIZE(zids) + 1) := cvFo(zi, 1);
+      znames(SIZE(znames) + 1) := cvPath(cvFo(zi, 1));
+    END;
+  END;
+  zc := 0;
+  CHOOSE(zc, ztitle, znames);
+  cvArmed := 0; cvDown := 0;
+  IF zc < 1 THEN RETURN ""; END;
+  RETURN zids(zc);
+END;
+
+// ---- browser actions ---------------------------------------------------
+
+cvBrowserAct(za)
+BEGIN
+  LOCAL zrow, zs, zc, zid, zix, zf;
+  zrow := {0, 0};
+  IF cvSel >= 1 AND cvSel <= SIZE(cvRowL) THEN zrow := cvRowL(cvSel); END;
+  CASE
+    IF za == 1 THEN
+      IF zrow(1) == 1 THEN
+        cvCur := cvFo(zrow(2), 1);
+        cvSel := 1; cvTop := 1;
+      END;
+      IF zrow(1) == 2 THEN cvOpenCalc(zrow(2)); END;
+    END;
+    IF za == 2 THEN
+      zc := 0;
+      CHOOSE(zc, "New", "Calculator", "Folder");
+      cvArmed := 0; cvDown := 0;
+      IF zc == 1 THEN
+        zs := cvAsk("New calculator", "Name:", "Untitled");
+        IF TYPE(zs) == 2 AND SIZE(zs) > 0 THEN
+          cvCa(SIZE(cvCa) + 1) := {cvNewId(), cvCur, zs, "0", {}, cvNewSlot(), "c", "1"};
+          cvSaveCalc(SIZE(cvCa));
+          cvCI := SIZE(cvCa);
+          cvView := 1;
+          cvSel := 1; cvTop := 1;
+          cvEval();
+        END;
+      END;
+      IF zc == 2 THEN
+        zs := cvAsk("New folder", "Name:", "New folder");
+        IF TYPE(zs) == 2 AND SIZE(zs) > 0 THEN
+          cvFo(SIZE(cvFo) + 1) := {cvNewId(), cvCur, zs};
+          cvSave();
+        END;
+      END;
+    END;
+    IF za == 3 THEN
+      IF zrow(1) == 1 THEN
+        zs := cvAsk("Rename folder", "Name:", cvFo(zrow(2), 3));
+        IF TYPE(zs) == 2 AND SIZE(zs) > 0 THEN cvFo(zrow(2), 3) := zs; cvSave(); END;
+      END;
+      IF zrow(1) == 2 THEN
+        zs := cvAsk("Rename calculator", "Name:", cvCa(zrow(2), 3));
+        IF TYPE(zs) == 2 AND SIZE(zs) > 0 THEN cvCa(zrow(2), 3) := zs; cvSave(); END;
+      END;
+    END;
+    IF za == 4 THEN
+      IF zrow(1) == 1 THEN
+        zid := cvPickFolder("Move folder to", cvFo(zrow(2), 1));
+        IF SIZE(zid) > 0 THEN cvFo(zrow(2), 2) := zid; cvSave(); END;
+      END;
+      IF zrow(1) == 2 THEN
+        zid := cvPickFolder("Move calculator to", "");
+        IF SIZE(zid) > 0 THEN cvCa(zrow(2), 2) := zid; cvSave(); END;
+      END;
+    END;
+    IF za == 5 THEN
+      IF zrow(1) == 1 THEN
+        IF cvConfirm("Delete folder " + cvFo(zrow(2), 3) + " and all inside?") THEN
+          cvDelFolder(cvFo(zrow(2), 1));
+          cvSave();
+        END;
+      END;
+      IF zrow(1) == 2 THEN
+        IF cvConfirm("Delete " + cvCa(zrow(2), 3) + "?") THEN
+          cvDropNote(zrow(2));
+          cvCa := cvRemoveAt(cvCa, zrow(2));
+          cvSave();
+        END;
+      END;
+    END;
+    IF za == 6 THEN
+      cvQuit := 1;
+    END;
+    IF za == 7 THEN
+      // Back: up one folder, or leave from the top.
+      IF cvCur == "0" THEN
+        cvQuit := 1;
+      ELSE
+        zix := cvFolderIx(cvCur);
+        zf := cvCur;
+        cvCur := "0";
+        IF zix > 0 THEN cvCur := cvFo(zix, 2); END;
+        cvRows();
+        cvSel := 1;
+        FOR zix FROM 1 TO SIZE(cvRowL) DO
+          IF cvRowL(zix, 1) == 1 THEN
+            IF cvFo(cvRowL(zix, 2), 1) == zf THEN cvSel := zix; END;
+          END;
+        END;
+      END;
+    END;
+  END;
+END;
+
+// ---- calculator actions ------------------------------------------------
+
+cvEditLine(zix)
+BEGIN
+  LOCAL zl, zs, zv, zlab, zlock;
+  zl := cvCa(cvCI, 5, zix);
+  zlock := cvCa(cvCI, 4) == "1";
+  IF zlock THEN
+    IF zl(2) == "1" THEN cvInline(zix); END;
+    RETURN 0;
+  END;
+  cvBuildPal();
+  CASE
+    IF zl(2) == "1" THEN
+      zlab := cvAsk("Input line", "label (shown when locked)", zl(5));
+      IF TYPE(zlab) <> 2 THEN RETURN 0; END;
+      zv := cvAsk("Input line", "variable (e.g. X_1)", zl(4));
+      IF TYPE(zv) <> 2 THEN RETURN 0; END;
+      cvPalOn := 1;
+      zs := cvAsk("Input line", "value", zl(6));
+      IF TYPE(zs) <> 2 THEN RETURN 0; END;
+      cvCa(cvCI, 5, zix, 5) := zlab;
+      cvCa(cvCI, 5, zix, 4) := zv;
+      cvCa(cvCI, 5, zix, 6) := zs;
+    END;
+    IF zl(2) == "2" THEN
+      zlab := cvAsk("Output line", "label (shown when locked)", zl(5));
+      IF TYPE(zlab) <> 2 THEN RETURN 0; END;
+      cvPalOn := 1;
+      zs := cvAsk("Output line", "expression", zl(6));
+      IF TYPE(zs) <> 2 THEN RETURN 0; END;
+      cvCa(cvCI, 5, zix, 5) := zlab;
+      cvCa(cvCI, 5, zix, 6) := zs;
+    END;
+    DEFAULT
+      cvPalOn := 1;
+      zs := cvAsk("Equation   (Enter: new line, OK: done)", "", zl(6));
+      IF TYPE(zs) <> 2 THEN RETURN 0; END;
+      cvCa(cvCI, 5, zix, 6) := zs;
+  END;
+  // -1: not saved (the PC wrote meanwhile and the calculator was reloaded).
+  IF cvSaveCalc(cvCI) == 0 THEN RETURN -1; END;
+  cvEval();
+  IF zl(2) == "0" AND cvByEnter AND DIM(zs) > 0 THEN RETURN 2; END;
+  RETURN 1;
+END;
+
+// Inserts a new line of role zrole at zix and edits it; a new Eq line
+// starts hidden when locked. Cancelled, or an Eq line left empty, it is
+// taken out again. Answers what cvEditLine answered (0 when taken out).
+cvNewLine(zix, zrole)
+BEGIN
+  LOCAL zr;
+  cvCa(cvCI, 5) := cvInsertAt(cvCa(cvCI, 5), zix, {"", zrole, IFTE(zrole == "0", "1", "0"), "", "", ""});
+  cvSelLine(zix);
+  zr := cvEditLine(zix);
+  // Reloaded from the PC: the lines are the PC's now, nothing to take out.
+  IF zr == -1 THEN RETURN 0; END;
+  IF zr == 0 THEN
+    cvCa(cvCI, 5) := cvRemoveAt(cvCa(cvCI, 5), zix);
+    cvRows();
+    RETURN 0;
+  END;
+  IF zrole == "0" AND DIM(cvCa(cvCI, 5, zix, 6)) == 0 THEN
+    cvCa(cvCI, 5) := cvRemoveAt(cvCa(cvCI, 5), zix);
+    IF cvSaveCalc(cvCI) THEN cvEval(); END;
+    cvRows();
+    RETURN 0;
+  END;
+  RETURN zr;
+END;
+
+// Edits line zix (zrole "") or a new line of role zrole there; while an Eq
+// line is finished with Enter, a new Eq line follows below it. Enter on an
+// empty one ends the run.
+cvEditFlow(zix, zrole)
+BEGIN
+  LOCAL zr;
+  IF DIM(zrole) == 0 THEN zr := cvEditLine(zix); ELSE zr := cvNewLine(zix, zrole); END;
+  WHILE zr == 2 DO
+    zr := cvNewLine(zix + 1, "0");
+    IF zr > 0 THEN zix := zix + 1; END;
+  END;
+  IF cvView == 1 THEN cvSelLine(zix); END;
+  RETURN 1;
+END;
+
+// Selects the row showing line zix, if one does.
+cvSelLine(zix)
+BEGIN
+  LOCAL zn;
+  cvRows();
+  FOR zn FROM 1 TO SIZE(cvRowL) DO
+    IF cvRowL(zn, 2) == zix THEN cvSel := zn; END;
+  END;
+END;
+
+// Opens calculator zix, showing its folder when it is left.
+cvOpenCalc(zix)
+BEGIN
+  IF cvView == 1 AND cvCI > 0 THEN cvPurge(cvNames(cvCa(cvCI, 5))); END;
+  cvCur := cvCa(zix, 2);
+  IF cvCur <> "0" AND cvFolderIx(cvCur) == 0 THEN cvCur := "0"; END;
+  cvCI := zix;
+  cvEnsure(cvCI);
+  cvView := 1;
+  cvSel := 1; cvTop := 1;
+  cvEval();
+END;
+
+// Adds a line below the selected one, of a role picked from a menu.
+cvAddLine()
+BEGIN
+  LOCAL zc, zrole, zix, zn;
+  zc := 0;
+  CHOOSE(zc, "Add line", "Eq (equation)", "Input", "Output");
+  cvArmed := 0; cvDown := 0;
+  IF zc < 1 THEN RETURN 0; END;
+  zrole := MID("012", zc, 1);
+  zn := SIZE(cvCa(cvCI, 5));
+  zix := zn + 1;
+  IF cvSel >= 1 AND cvSel <= SIZE(cvRowL) THEN zix := cvRowL(cvSel, 2) + 1; END;
+  cvEditFlow(zix, zrole);
+  RETURN 1;
+END;
+
+// d/dx (zkind 1) or an antiderivative (zkind 2) of the selected line,
+// inserted as a new Eq line below it, as the web app does.
+cvCasOp(zkind)
+BEGIN
+  LOCAL zix, zl, zt, zsp, zv, zr;
+  LOCAL zop;
+  IF cvSel < 1 OR cvSel > SIZE(cvRowL) THEN RETURN 0; END;
+  zix := cvRowL(cvSel, 2);
+  zl := cvCa(cvCI, 5, zix);
+  IF zl(2) == "1" THEN MSGBOX("Pick an Eq or Output line."); RETURN 0; END;
+  zt := cvTrim(zl(6));
+  IF zl(2) == "0" THEN
+    zsp := cvSplit(zt);
+    IF zsp(1) > 0 THEN zt := zsp(4); END;
+  END;
+  IF SIZE(zt) == 0 THEN RETURN 0; END;
+  zop := "diff";
+  IF zkind == 2 THEN zop := "integrate"; END;
+  zv := cvAsk(IFTE(zkind == 1, "Differentiate", "Integrate"), "Variable:", cvGuessVar(zt));
+  IF TYPE(zv) <> 2 THEN RETURN 0; END;
+  zv := cvTrim(zv);
+  IF cvIsIdent(zv) == 0 THEN MSGBOX("Not a variable name: " + zv); RETURN 0; END;
+  IFERR
+    zr := CAS.expr("string(" + zop + "(" + cvMangle(zt, {}) + ",zcs" + cvCasName(zv) + "))");
+  THEN
+    MSGBOX("The CAS could not do that one.");
+    RETURN 0;
+  END;
+  IF TYPE(zr) <> 2 THEN zr := STRING(zr); END;
+  zr := cvClean(zr);
+  cvCa(cvCI, 5) := cvInsertAt(cvCa(cvCI, 5), zix + 1, {"", "0", "1", "", "", zr});
+  cvSaveCalc(cvCI);
+  cvEval();
+  cvRows();
+  FOR zl FROM 1 TO SIZE(cvRowL) DO
+    IF cvRowL(zl, 2) == zix + 1 THEN cvSel := zl; END;
+  END;
+  RETURN 1;
+END;
+
+cvMoveLine(zd)
+BEGIN
+  LOCAL zix, zj, zlines, zt;
+  IF cvSel < 1 OR cvSel > SIZE(cvRowL) THEN RETURN 0; END;
+  zix := cvRowL(cvSel, 2);
+  zlines := cvCa(cvCI, 5);
+  zj := zix + zd;
+  IF zj < 1 OR zj > SIZE(zlines) THEN RETURN 0; END;
+  zt := zlines(zix);
+  zlines(zix) := zlines(zj);
+  zlines(zj) := zt;
+  cvCa(cvCI, 5) := zlines;
+  cvSel := cvSel + zd;
+  cvSaveCalc(cvCI);
+  cvEval();
+  RETURN 1;
+END;
+
+cvMoreMenu()
+BEGIN
+  LOCAL zc, zix, zl, zs, zlock;
+  zlock := cvCa(cvCI, 4) == "1";
+  zc := 0;
+  IF zlock THEN
+    CHOOSE(zc, "Calculator", "Unlock", IFTE(cvExact, "Show decimals", "Show exact"),
+           "Settings", "Back to folder");
+    cvArmed := 0; cvDown := 0;
+    IF zc == 1 THEN cvCalcAct(4); END;
+    IF zc == 2 THEN cvExact := 1 - cvExact; cvEval(); END;
+    IF zc == 3 THEN cvSettings(); END;
+    IF zc == 4 THEN cvCalcAct(6); END;
+    RETURN 1;
+  END;
+  CHOOSE(zc, "Line and calculator", "d/dx", "Integral dx", "Move line up", "Move line down",
+         "Show/hide when locked", "Change role", IFTE(cvExact, "Show decimals", "Show exact"),
+         "Rename calculator", "Settings", "Back to folder");
+  cvArmed := 0; cvDown := 0;
+  zix := 0;
+  IF cvSel >= 1 AND cvSel <= SIZE(cvRowL) THEN zix := cvRowL(cvSel, 2); END;
+  CASE
+    IF zc == 1 THEN cvCasOp(1); END;
+    IF zc == 2 THEN cvCasOp(2); END;
+    IF zc == 3 THEN cvMoveLine(-1); END;
+    IF zc == 4 THEN cvMoveLine(1); END;
+    IF zc == 5 AND zix > 0 THEN
+      zl := cvCa(cvCI, 5, zix);
+      cvCa(cvCI, 5, zix, 3) := IFTE(zl(3) == "1", "0", "1");
+      cvSaveCalc(cvCI);
+    END;
+    IF zc == 6 AND zix > 0 THEN
+      zl := 0;
+      CHOOSE(zl, "Role", "Eq (equation)", "Input", "Output");
+      cvArmed := 0; cvDown := 0;
+      IF zl >= 1 THEN
+        cvCa(cvCI, 5, zix, 2) := MID("012", zl, 1);
+        cvSaveCalc(cvCI);
+        cvEval();
+      END;
+    END;
+    IF zc == 7 THEN cvExact := 1 - cvExact; cvEval(); END;
+    IF zc == 8 THEN
+      zs := cvAsk("Rename calculator", "Name:", cvCa(cvCI, 3));
+      IF TYPE(zs) == 2 AND SIZE(zs) > 0 THEN cvCa(cvCI, 3) := zs; cvSave(); END;
+    END;
+    IF zc == 9 THEN cvSettings(); END;
+    IF zc == 10 THEN cvCalcAct(6); END;
+  END;
+  RETURN 1;
+END;
+
+cvCalcAct(za)
+BEGIN
+  LOCAL zix, zlock, zid;
+  zlock := cvCa(cvCI, 4) == "1";
+  zix := 0;
+  IF cvSel >= 1 AND cvSel <= SIZE(cvRowL) THEN zix := cvRowL(cvSel, 2); END;
+  CASE
+    IF za == 1 THEN
+      IF zix > 0 THEN
+        IF zlock THEN cvEditLine(zix); ELSE cvEditFlow(zix, ""); END;
+      ELSE
+        // An empty calculator: Enter starts typing equations.
+        IF zlock == 0 THEN cvEditFlow(SIZE(cvCa(cvCI, 5)) + 1, "0"); END;
+      END;
+    END;
+    IF za == 2 AND zlock == 0 THEN cvAddLine(); END;
+    IF za == 3 AND zlock == 0 AND zix > 0 THEN
+      IF cvConfirm("Delete this line?") THEN
+        cvCa(cvCI, 5) := cvRemoveAt(cvCa(cvCI, 5), zix);
+        cvSaveCalc(cvCI);
+        cvEval();
+      END;
+    END;
+    IF za == 4 THEN
+      cvCa(cvCI, 4) := IFTE(zlock, "0", "1");
+      cvSave();
+      cvSel := 1; cvTop := 1;
+    END;
+    IF za == 5 THEN cvMoreMenu(); END;
+    IF za == 6 THEN
+      zid := cvCa(cvCI, 1);
+      cvPurge(cvNames(cvCa(cvCI, 5)));
+      cvView := 0;
+      cvCI := 0;
+      cvRows();
+      cvSel := 1;
+      FOR zix FROM 1 TO SIZE(cvRowL) DO
+        IF cvRowL(zix, 1) == 2 THEN
+          IF cvCa(cvRowL(zix, 2), 1) == zid THEN cvSel := zix; END;
+        END;
+      END;
+    END;
+  END;
+END;
+
+// ---- input -------------------------------------------------------------
+
+// Touch coordinates arrive as integers (#94:-16h); adding a real makes
+// them ordinary numbers, measured on the emulator.
+cvNum(zv)
+BEGIN
+  IF TYPE(zv) == 1 THEN RETURN zv + 0.5 - 0.5; END;
+  RETURN zv;
+END;
+
+cvKey(zk)
+BEGIN
+  LOCAL zn;
+  zn := SIZE(cvRowL);
+  CASE
+    IF zk == 2 THEN
+      IF cvSel > 1 THEN cvSel := cvSel - 1; END;
+    END;
+    IF zk == 12 THEN
+      IF cvSel < zn THEN cvSel := cvSel + 1; END;
+    END;
+    IF zk == 30 OR zk == 8 THEN
+      IF cvView == 0 THEN cvBrowserAct(1); ELSE cvCalcAct(1); END;
+    END;
+    IF zk == 4 OR zk == 7 THEN
+      IF cvView == 0 THEN cvBrowserAct(7); ELSE cvCalcAct(6); END;
+    END;
+    IF zk == 19 THEN
+      IF cvView == 0 THEN cvBrowserAct(5); ELSE cvCalcAct(3); END;
+    END;
+    IF zk == 50 THEN
+      IF cvView == 0 THEN cvBrowserAct(2); ELSE cvCalcAct(2); END;
+    END;
+    IF zk == 13 THEN
+      IF cvView == 1 THEN cvCalcAct(5); ELSE cvSettings(); END;
+    END;
+    IF zk == 5 THEN cvQuit := 1; END;
+  END;
+END;
+
+cvTap(zx, zy)
+BEGIN
+  LOCAL zk, zr, zh;
+  IF zy >= 213 THEN
+    zk := FLOOR(zx / 53.34) + 1;
+    IF zk < 1 THEN zk := 1; END;
+    IF zk > 6 THEN zk := 6; END;
+    IF cvView == 0 THEN
+      cvBrowserAct(zk);
+    ELSE
+      IF cvCa(cvCI, 4) == "1" AND (zk == 2 OR zk == 3) THEN RETURN 0; END;
+      cvCalcAct(zk);
+    END;
+    RETURN 1;
+  END;
+  IF zy < 22 THEN RETURN 0; END;
+  zh := 24;
+  IF cvView == 1 THEN zh := 38; END;
+  zr := cvTop + FLOOR((zy - 22) / zh);
+  IF zr < 1 OR zr > SIZE(cvRowL) THEN RETURN 0; END;
+  IF cvView == 1 THEN
+    IF cvCa(cvCI, 4) == "1" AND cvCa(cvCI, 5, cvRowL(zr, 2), 2) == "1" THEN
+      cvSel := zr;
+      cvInline(cvRowL(zr, 2));
+      RETURN 1;
+    END;
+  END;
+  // First touch selects; touching the selected row opens it.
+  IF zr == cvSel THEN
+    cvKey(30);
+  ELSE
+    cvSel := zr;
+  END;
+  RETURN 1;
+END;
+
+// Waits for a key or a touch. Answers {1, key}, {2, x, y} for a touch
+// released, or {0} when zidle milliseconds pass with nothing (zidle 0:
+// wait for ever). A touch counts only if the screen was seen untouched
+// first (cvArmed), which drops the touch that opened the app or closed a
+// dialog.
+cvEvent(zidle)
+BEGIN
+  LOCAL zk, zm, zp, zt0;
+  zt0 := TICKS;
+  WHILE 1 DO
+    // A short sleep between polls leaves the calculator time to answer
+    // USB, so the PC can sync while CalcVault is open (if this firmware
+    // answers then at all: see hpprime2/README.md).
+    IF cvNap THEN WAIT(0.05); END;
+    zk := GETKEY;
+    IF zk >= 0 THEN RETURN {1, zk}; END;
+    zm := MOUSE;
+    zp := zm(1);
+    IF SIZE(zp) >= 2 THEN
+      IF cvArmed THEN
+        IF cvDown == 0 THEN
+          cvTx := cvNum(zp(1));
+          cvTy := cvNum(zp(2));
+        END;
+        cvDown := 1;
+      END;
+    ELSE
+      IF cvDown THEN
+        cvDown := 0;
+        RETURN {2, cvTx, cvTy};
+      END;
+      cvArmed := 1;
+    END;
+    IF zidle > 0 THEN
+      IF TICKS - zt0 > zidle THEN RETURN {0}; END;
+    END;
+  END;
+END;
+
+EXPORT CALCVAULT2()
+BEGIN
+  LOCAL ze, zdirty, zp;
+  cvView := 0; cvCur := "0"; cvCI := 0; cvSel := 1; cvTop := 1;
+  cvQuit := 0; cvExact := 0; cvArmed := 0; cvDown := 0; cvPend := {}; cvEdRow := 0;
+  cvLoadSet();
+  cvRev := cvReadRev();
+  cvLoad();
+  cvLoadShared();
+  // What the bridge said before this start is not news: neither "online"
+  // until its heartbeat changes, nor a calculator to jump to.
+  cvLink := cvReadNote("CVLINK"); cvLinkT := TICKS - 100000; cvWasOn := 0;
+  cvFocus := cvReadNote("CVFOCUS");
+  // Back to the calculator that was open when CalcVault was last left.
+  IF DIM(cvOpenId) > 0 THEN
+    ze := cvCalcIx(cvOpenId);
+    IF ze > 0 THEN cvOpenCalc(ze); END;
+  END;
+  // The key that started us (Enter on Home, or on the app's icon) may still
+  // be waiting; without this it would open the first row.
+  REPEAT ze := GETKEY; UNTIL ze < 0;
+  zdirty := 1;
+  REPEAT
+    IF zdirty THEN cvDraw(); END;
+    zdirty := 1;
+    ze := cvEvent(1500);
+    IFERR
+      CASE
+        IF ze(1) == 0 THEN
+          // Idle: pick up a live sync from the PC.
+          zdirty := cvPoll();
+        END;
+        IF ze(1) == 1 THEN cvKey(ze(2)); END;
+        IF ze(1) == 2 THEN
+          cvTap(ze(2), ze(3));
+          // A touch that ended an in-place edit acts as well.
+          WHILE SIZE(cvPend) == 2 DO
+            zp := cvPend;
+            cvPend := {};
+            cvRows();
+            cvTap(zp(1), zp(2));
+          END;
+        END;
+      END;
+    THEN
+      MSGBOX("Something went wrong; your data is saved.");
+      cvArmed := 0; cvDown := 0; cvEdRow := 0;
+    END;
+  UNTIL cvQuit;
+  // Remember the open calculator, to come back to it next time.
+  cvOpenId := "";
+  IF cvView == 1 AND cvCI > 0 THEN cvOpenId := cvCa(cvCI, 1); END;
+  cvSaveSet();
+  // Every change was saved when it was made. Saving again here could put
+  // back data that a sync replaced while this was open.
+  RETURN "CalcVault closed";
+END;

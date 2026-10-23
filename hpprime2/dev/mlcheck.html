@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MathLive check</title>
+<!-- Development aid: runs LaTeX through the web app's own MathLive + math.js
+     path and prints what each case evaluates to, so the sync tool's
+     converter can be checked against the real thing (see mlcheck.py). -->
+<script src="/frontend/lib/mathjs.min.js"></script>
+<script type="importmap">
+{"imports": {"mathlive": "/frontend/lib/mathlive/mathlive.min.mjs"}}
+</script>
+</head>
+<body>
+<pre id="out">running</pre>
+<script type="module">
+import 'mathlive';
+
+// Copied from frontend/app.js: the fix-ups the app applies to MathLive's
+// ascii-math before math.js sees it.
+function cleanSubscripts(ascii) {
+  return ascii.replace(/_\(([^()]*)\)/g, (_, inner) => '_' + inner.replace(/\s+/g, ''));
+}
+function convertAbsBars(ascii) {
+  let prev, result = ascii, guard = 0;
+  do { prev = result; result = result.replace(/\|([^|]*)\|/, 'abs($1)'); guard++; }
+  while (result !== prev && guard < 20);
+  return result;
+}
+function convertMatrixParens(ascii) {
+  const pattern = /\(\s*(\([^()]*\)(?:\s*,\s*\([^()]*\))*)\s*\)/g;
+  let prev, result = ascii, guard = 0;
+  do {
+    prev = result;
+    result = result.replace(pattern, (whole, inner, offset, full) => {
+      const bracketed = `[${inner.replace(/\(/g, '[').replace(/\)/g, ']')}]`;
+      const precededByIdentifier = /[A-Za-z_]\w*\s*$/.test(full.slice(0, offset));
+      return precededByIdentifier ? `(${bracketed})` : bracketed;
+    });
+    guard++;
+  } while (result !== prev && guard < 10);
+  return result;
+}
+function normalizeOperators(ascii) {
+  return ascii.replace(/∗|×|·/g, '*').replace(/\s*-:\s*/g, '/').replace(/÷/g, '/')
+    .replace(/−/g, '-').replace(/≥/g, '>=').replace(/≤/g, '<=').replace(/≠/g, '!=');
+}
+function postProcessAscii(ascii) {
+  return normalizeOperators(convertMatrixParens(convertAbsBars(cleanSubscripts(ascii))));
+}
+
+const cases = await (await fetch('mlcases.json?' + Date.now())).json();
+const field = document.createElement('math-field');
+document.body.appendChild(field);
+await customElements.whenDefined('math-field');
+const results = [];
+for (const c of cases) {
+  const scope = {
+    log: (x, base) => (base === undefined ? Math.log10(x) : Math.log(x) / Math.log(base)),
+    ln: (x) => Math.log(x),
+    ...c.scope,
+  };
+  let ascii = '', value = null, error = null;
+  try {
+    field.setValue(c.latex, { format: 'latex' });
+    ascii = postProcessAscii(field.getValue('ascii-math') || '');
+    const v = math.evaluate(ascii, scope);
+    value = typeof v === 'number' ? v : (v && v.toArray ? v.toArray() : (typeof v === 'boolean' ? (v ? 1 : 0) : String(v)));
+    if (v && typeof v === 'object' && 're' in v) value = String(v);
+  } catch (e) {
+    error = String(e.message || e);
+  }
+  results.push({ id: c.id, latex: c.latex, ascii, value, error });
+}
+document.getElementById('out').textContent = JSON.stringify(results);
+</script>
+</body>
+</html>
