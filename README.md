@@ -51,6 +51,34 @@ the sidebar (draggable onto each other to nest, with a **+** button per
 folder for a subfolder) start collapsed and stay however you leave them
 for the rest of the session.
 
+### Global and shared lines
+
+A calculator can use lines it doesn't contain itself, at two levels:
+
+- **Global lines** - the **Global lines** entry at the top of the sidebar.
+  Anything defined there (constants, formulas, givens) is available in every
+  calculator.
+- **Folder lines** - the **Σ** button on a folder header (always visible on a
+  touch screen). Shared by every calculator in that folder *and its
+  subfolders*, so one folder per assignment can hold that assignment's givens.
+
+Both are edited in the same line editor as a calculator (Eq and Input lines;
+an Output line has no use there). A calculator evaluates, in order: the
+global lines, the shared lines of each folder from the outermost down to the
+one it sits in, then its own lines. Later lines win, so a question can
+override a shared value just by assigning it again (`m = 5` after the folder
+defined `m = 2` changes `m` for that question only). A banner above a
+calculator's lines shows which sets it uses, with their line counts; tap one
+to edit it. A small **Σ3** badge in the sidebar means that folder (or the
+global set) has three lines. Moving a calculator to another folder changes
+what it inherits immediately.
+
+Errors in a shared line show where that line is edited, not in every
+calculator that uses it. Shared lines live in the web app only: **the HP
+Prime sync copies each calculator's own lines but not these**, so on the
+calculator a line that relies on a shared constant will not know it. (Define it
+in the calculator itself if you need it there.)
+
 ### Math notes
 
 - `log(x)` is base 10 and `ln(x)` is natural log - the usual calculator/

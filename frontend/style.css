@@ -469,6 +469,53 @@ math-field {
   color: var(--text);
 }
 
+/* --- global / folder shared lines --- */
+.tree-global {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.shared-badge {
+  margin-left: 4px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: normal;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.tree-folder-header.active {
+  background: var(--accent-dim);
+}
+
+.calc-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.ctx-chip {
+  padding: 2px 9px;
+  font-size: 12px;
+  border-radius: 999px;
+}
+
+/* shared-line sets: no rename, move, delete or lock */
+.shared-doc #calc-move,
+.shared-doc #calc-delete,
+.shared-doc #calc-lock-toggle,
+.shared-doc #calc-more {
+  display: none;
+}
+
 /* --- HP Prime sync panel --- */
 .hp-btn {
   flex: 1 1 100%;

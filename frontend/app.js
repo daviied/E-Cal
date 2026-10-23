@@ -311,6 +311,7 @@ async function api(path, opts = {}) {
 const apiGet = (p) => api(p);
 const apiPost = (p, body) => api(p, { method: 'POST', body: JSON.stringify(body) });
 const apiPatch = (p, body) => api(p, { method: 'PATCH', body: JSON.stringify(body) });
+const apiPut = (p, body) => api(p, { method: 'PUT', body: JSON.stringify(body) });
 const apiDelete = (p) => api(p, { method: 'DELETE' });
 
 // ---------- latex <-> plain math bridge (via a hidden math-field) ----------
@@ -345,7 +346,7 @@ function formatResult(value) {
 }
 
 // ---------- state ----------
-let treeData = { folders: [], calculators: [] };
+let treeData = { folders: [], calculators: [], globals: { lines: [] } };
 let selected = null; // { id, kind }
 // Folders start collapsed by default; opening one adds its id here, and it
 // stays open (even across tree re-renders/reloads within this session)
@@ -440,8 +441,26 @@ async function init() {
 // ---------- tree ----------
 async function loadTree() {
   treeData = await apiGet('/api/tree');
+  if (!treeData.globals || !Array.isArray(treeData.globals.lines)) treeData.globals = { lines: [] };
   renderTree();
   populateFolderSelects();
+  refreshOpenDocument();
+}
+
+// After the tree changes (rename, move, delete), an open document's folder
+// chain - and so what it inherits - may have changed. Update the banner and
+// the results without rebuilding the editing fields (focus stays put).
+function refreshOpenDocument() {
+  if (!currentCalc) return;
+  if (currentCalc.kind === 'calc') {
+    const meta = treeData.calculators.find((c) => c.id === currentCalc.id);
+    if (meta) currentCalc.folder_id = meta.folder_id;
+  } else if (currentCalc.kind === 'folder' && !treeData.folders.some((f) => f.id === currentCalc.id)) {
+    clearSelection();
+    return;
+  }
+  renderCalcContext();
+  computeAll();
 }
 
 function childFolders(parentId) {
@@ -451,9 +470,25 @@ function calcsInFolder(folderId) {
   return treeData.calculators.filter((c) => c.folder_id === folderId);
 }
 
+function sharedLineCount(data) {
+  return data && Array.isArray(data.lines) ? data.lines.length : 0;
+}
+function sharedBadge(data) {
+  const n = sharedLineCount(data);
+  return n ? ` <small class="shared-badge" title="${n} shared line${n === 1 ? '' : 's'}">&#931;${n}</small>` : '';
+}
+
 function renderTree() {
   const root = document.getElementById('tree');
   root.innerHTML = '';
+
+  const globalItem = document.createElement('div');
+  globalItem.className = 'tree-item tree-global' + (selected && selected.kind === 'global' ? ' active' : '');
+  globalItem.title = 'Lines every calculator can use (constants, formulas, givens)';
+  globalItem.innerHTML = `<span>&#127760; Global lines${sharedBadge(treeData.globals)}</span>`;
+  globalItem.addEventListener('click', () => selectShared('global'));
+  root.appendChild(globalItem);
+
   root.appendChild(renderFolderLevel(null));
 }
 
@@ -517,13 +552,13 @@ function renderFolder(folder) {
   wrap.className = 'tree-folder';
 
   const header = document.createElement('div');
-  header.className = 'tree-folder-header';
+  header.className = 'tree-folder-header' + (selected && selected.kind === 'folder' && selected.id === folder.id ? ' active' : '');
   header.draggable = true;
-  header.innerHTML = `<span>&#128193; ${escapeHtml(folder.name)}</span>`;
+  header.innerHTML = `<span>&#128193; ${escapeHtml(folder.name)}${sharedBadge(folder.data)}</span>`;
 
   const actions = document.createElement('span');
   actions.className = 'tree-row-actions';
-  actions.innerHTML = `<button data-act="add-sub" title="New subfolder here">+</button><button data-act="rename" title="Rename">&#9998;</button><button data-act="delete" title="Delete">&#10005;</button>`;
+  actions.innerHTML = `<button data-act="shared" title="Shared lines for every calculator in this folder">&#931;</button><button data-act="add-sub" title="New subfolder here">+</button><button data-act="rename" title="Rename">&#9998;</button><button data-act="delete" title="Delete">&#10005;</button>`;
   header.appendChild(actions);
 
   const children = document.createElement('div');
@@ -579,6 +614,10 @@ function renderFolder(folder) {
     else moveCalcToFolder(draggingItem.id, folder.id);
   });
 
+  actions.querySelector('[data-act="shared"]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    selectShared('folder', folder.id);
+  });
   actions.querySelector('[data-act="add-sub"]').addEventListener('click', async (e) => {
     e.stopPropagation();
     const name = await askPrompt('Subfolder name');
@@ -611,7 +650,7 @@ function renderFolder(folder) {
 
 function renderCalcItem(calc) {
   const item = document.createElement('div');
-  item.className = 'tree-item' + (selected && selected.id === calc.id ? ' active' : '');
+  item.className = 'tree-item' + (selected && selected.kind === 'calc' && selected.id === calc.id ? ' active' : '');
   item.draggable = true;
   item.innerHTML = `<span>${escapeHtml(calc.name)}</span>`;
 
@@ -643,7 +682,7 @@ function renderCalcItem(calc) {
     e.stopPropagation();
     if (await askConfirm(`Delete "${calc.name}"?`)) {
       await apiDelete(`/api/calculators/${calc.id}`);
-      if (selected && selected.id === calc.id) clearSelection();
+      if (selected && selected.kind === 'calc' && selected.id === calc.id) clearSelection();
       await loadTree();
     }
   });
@@ -703,6 +742,8 @@ const views = {
 };
 
 function clearSelection() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
   selected = null;
   currentCalc = null;
   views.empty.hidden = false;
@@ -736,10 +777,56 @@ function normalizeCalcData(data) {
 }
 
 async function selectCalculator(id) {
+  await flushSave();
   if (MOBILE_QUERY.matches) setSidebarCollapsed(true, { persist: false });
   currentCalc = await apiGet(`/api/calculators/${id}`);
+  currentCalc.kind = 'calc';
   currentCalc.data = normalizeCalcData(currentCalc.data);
-  selected = { id };
+  selected = { kind: 'calc', id };
+  views.empty.hidden = true;
+  views.calculator.hidden = false;
+  renderCalcView();
+  renderTree();
+}
+
+// What is open can be a calculator, a folder's shared lines, or the global
+// lines; each saves to its own place.
+async function saveNow() {
+  const doc = currentCalc;
+  if (!doc) return;
+  if (doc.kind === 'global') {
+    await apiPut('/api/globals', { data: { lines: doc.data.lines } });
+  } else if (doc.kind === 'folder') {
+    await apiPatch(`/api/folders/${doc.id}`, { data: { lines: doc.data.lines } });
+  } else {
+    await apiPatch(`/api/calculators/${doc.id}`, { name: doc.name, data: doc.data });
+    const idx = treeData.calculators.findIndex((c) => c.id === doc.id);
+    if (idx >= 0) treeData.calculators[idx].name = doc.name;
+  }
+  renderTree();
+}
+
+// Opens the global lines (kind 'global') or one folder's shared lines (kind
+// 'folder') in the same line editor a calculator uses. The editor works on
+// the tree's own copy of the lines, so every calculator sees changes at once.
+async function selectShared(kind, folderId = null) {
+  await flushSave();
+  if (MOBILE_QUERY.matches) setSidebarCollapsed(true, { persist: false });
+  let data;
+  let name;
+  if (kind === 'global') {
+    data = treeData.globals;
+    name = 'Global lines';
+  } else {
+    const folder = treeData.folders.find((f) => f.id === folderId);
+    if (!folder) return;
+    if (!folder.data || !Array.isArray(folder.data.lines)) folder.data = { lines: [] };
+    data = folder.data;
+    name = 'Shared lines: ' + folder.name;
+  }
+  data.locked = false;
+  currentCalc = { kind, id: folderId, name, folder_id: null, data };
+  selected = { kind, id: folderId };
   views.empty.hidden = true;
   views.calculator.hidden = false;
   renderCalcView();
@@ -748,16 +835,19 @@ async function selectCalculator(id) {
 
 function scheduleSave() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    if (!currentCalc) return;
-    await apiPatch(`/api/calculators/${currentCalc.id}`, {
-      name: currentCalc.name,
-      data: currentCalc.data,
-    });
-    const idx = treeData.calculators.findIndex((c) => c.id === currentCalc.id);
-    if (idx >= 0) treeData.calculators[idx].name = currentCalc.name;
-    renderTree();
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    saveNow();
   }, 400);
+}
+
+// Switching documents must not lose (or misdirect) an edit still waiting for
+// its debounce timer: write it out first, while it is still the open one.
+async function flushSave() {
+  if (!saveTimer) return;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  await saveNow();
 }
 
 // ---------- calculator view ----------
@@ -799,6 +889,7 @@ calcNameInput.addEventListener('input', () => {
 calcMoveSelect.addEventListener('change', async () => {
   const folder_id = calcMoveSelect.value ? Number(calcMoveSelect.value) : null;
   await apiPatch(`/api/calculators/${currentCalc.id}`, { folder_id });
+  currentCalc.folder_id = folder_id;
   await loadTree();
 });
 document.getElementById('calc-delete').addEventListener('click', async () => {
@@ -826,9 +917,15 @@ let calcLineRows = []; // [{ line, field|null, resultEl|null }]
 let pendingFocusLineId = null;
 
 function renderCalcView() {
+  // Shared-line sets have no name of their own to edit, can't be moved or
+  // deleted from here, and have no locked view.
+  const isCalc = currentCalc.kind === 'calc';
+  views.calculator.classList.toggle('shared-doc', !isCalc);
+  calcNameInput.readOnly = !isCalc;
   calcNameInput.value = currentCalc.name;
   calcMoveSelect.value = currentCalc.folder_id ? String(currentCalc.folder_id) : '';
-  const locked = !!currentCalc.data.locked;
+  const locked = isCalc && !!currentCalc.data.locked;
+  renderCalcContext();
   calcLockToggle.textContent = locked ? 'Locked' : 'Unlocked';
   calcLockToggle.classList.toggle('locked', locked);
   calcLinesEl.innerHTML = '';
@@ -1192,6 +1289,7 @@ function renderEditLine(line) {
 
     const hideLabel = document.createElement('label');
     hideLabel.className = 'hidden-check';
+    hideLabel.hidden = currentCalc.kind !== 'calc';
     const hideCheckbox = document.createElement('input');
     hideCheckbox.type = 'checkbox';
     hideCheckbox.checked = !!line.hidden;
@@ -1300,8 +1398,112 @@ function baseScope() {
   };
 }
 
+// ---------- shared lines: global -> folder chain -> this calculator ----------
+// Every calculator evaluates, in order: the global lines, then the shared
+// lines of each folder from the outermost down to the one it sits in, then its
+// own lines. Later lines win, so a question can override anything shared by
+// assigning it again.
+
+// The folder to start from when walking outwards: a calculator's own folder,
+// or (for a folder's shared lines) that folder's parent.
+function inheritanceStartFolder(doc) {
+  if (doc.kind === 'calc') return doc.folder_id;
+  if (doc.kind === 'folder') {
+    const folder = treeData.folders.find((f) => f.id === doc.id);
+    return folder ? folder.parent_id : null;
+  }
+  return null;
+}
+
+// -> [{ kind, id, label, lines }], outermost first.
+function inheritedSets(doc) {
+  if (doc.kind === 'global') return [];
+  const sets = [{ kind: 'global', id: null, label: 'Global', lines: (treeData.globals && treeData.globals.lines) || [] }];
+  const chain = [];
+  const seen = new Set();
+  let id = inheritanceStartFolder(doc);
+  while (id !== null && id !== undefined && !seen.has(id)) {
+    seen.add(id);
+    const folder = treeData.folders.find((f) => f.id === id);
+    if (!folder) break;
+    chain.unshift({ kind: 'folder', id: folder.id, label: folder.name, lines: (folder.data && folder.data.lines) || [] });
+    id = folder.parent_id;
+  }
+  return sets.concat(chain);
+}
+
+function renderCalcContext() {
+  const el = document.getElementById('calc-context');
+  if (!currentCalc) {
+    el.hidden = true;
+    return;
+  }
+  el.innerHTML = '';
+  const intro = document.createElement('span');
+  const sets = inheritedSets(currentCalc);
+  if (currentCalc.kind === 'global') {
+    intro.textContent = 'Shared by every calculator. Anything defined here (constants, formulas, givens) can be used in all of them.';
+  } else if (currentCalc.kind === 'folder') {
+    intro.textContent = 'Shared by every calculator in this folder and its subfolders. Also uses:';
+  } else {
+    intro.textContent = 'Also uses shared lines from (tap to edit):';
+  }
+  el.appendChild(intro);
+  for (const set of sets) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'ctx-chip';
+    chip.textContent = `${set.label} (${set.lines.length})`;
+    chip.title = `Edit ${set.label} shared lines`;
+    chip.addEventListener('click', () => selectShared(set.kind, set.id));
+    el.appendChild(chip);
+  }
+  el.hidden = false;
+}
+
+// The ascii form of a shared line, cached per line: they are re-evaluated
+// on every keystroke in the calculator being edited, and converting each
+// through MathLive every time would be wasteful.
+const sharedAsciiCache = new WeakMap();
+function sharedLineAscii(line) {
+  const body = line.role === 'input' ? line.value : line.latex;
+  const key = `${line.role}|${line.varName}|${body}`;
+  const hit = sharedAsciiCache.get(line);
+  if (hit && hit.key === key) return hit.ascii;
+  let ascii = '';
+  try {
+    if (line.role === 'input') {
+      ascii = `${(line.varName || '').trim() || 'x'}=${latexToAscii(line.value) || '0'}`;
+    } else {
+      ascii = latexToAscii(line.latex);
+    }
+  } catch {
+    ascii = '';
+  }
+  sharedAsciiCache.set(line, { key, ascii });
+  return ascii;
+}
+
+// Runs the inherited lines into `scope`, silently: errors in a shared line
+// show up where it is edited, not in every calculator that inherits it.
+function evaluateInherited(scope) {
+  for (const set of inheritedSets(currentCalc)) {
+    for (const line of set.lines) {
+      if (line.role === 'output') continue;
+      const ascii = sharedLineAscii(line);
+      if (!ascii.trim()) continue;
+      try {
+        math.evaluate(ascii, scope);
+      } catch {
+        // see above
+      }
+    }
+  }
+}
+
 function computeAll() {
   const scope = baseScope();
+  evaluateInherited(scope);
   for (const rowState of calcLineRows) {
     const { line, field, resultEl } = rowState;
     let ascii = '';

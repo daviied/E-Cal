@@ -36,6 +36,19 @@ def init_db():
             )
             """
         )
+        # Shared lines for a folder (see get_tree): added after the table first
+        # shipped, so existing databases get the column on startup.
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(folders)")]
+        if "data" not in cols:
+            conn.execute("ALTER TABLE folders ADD COLUMN data TEXT NOT NULL DEFAULT '{}'")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS calculators (
@@ -58,16 +71,48 @@ def default_data(kind: str) -> dict:
     return {"locked": False, "lines": []}
 
 
+def _folder_out(row) -> dict:
+    out = dict(row)
+    try:
+        out["data"] = json.loads(out.get("data") or "{}")
+    except ValueError:
+        out["data"] = {}
+    return out
+
+
+def get_globals() -> dict:
+    """Lines shared by every calculator: {"lines": [...]}."""
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM app_state WHERE key = 'globals'").fetchone()
+    try:
+        data = json.loads(row["value"]) if row else {}
+    except ValueError:
+        data = {}
+    if not isinstance(data.get("lines"), list):
+        data["lines"] = []
+    return data
+
+
+def set_globals(data: dict) -> dict:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO app_state (key, value) VALUES ('globals', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (json.dumps(data),),
+        )
+    return get_globals()
+
+
 def get_tree() -> dict:
     with get_conn() as conn:
-        folders = [dict(r) for r in conn.execute("SELECT * FROM folders ORDER BY name COLLATE NOCASE")]
+        folders = [_folder_out(r) for r in conn.execute("SELECT * FROM folders ORDER BY name COLLATE NOCASE")]
         calcs = [
             dict(r)
             for r in conn.execute(
                 "SELECT id, folder_id, name, kind, created_at, updated_at FROM calculators ORDER BY name COLLATE NOCASE"
             )
         ]
-    return {"folders": folders, "calculators": calcs}
+    return {"folders": folders, "calculators": calcs, "globals": get_globals()}
 
 
 def create_folder(name: str, parent_id: int | None) -> dict:
@@ -77,22 +122,25 @@ def create_folder(name: str, parent_id: int | None) -> dict:
             (parent_id, name, _now()),
         )
         row = conn.execute("SELECT * FROM folders WHERE id = ?", (cur.lastrowid,)).fetchone()
-        return dict(row)
+        return _folder_out(row)
 
 
-def update_folder(folder_id: int, name: str | None, parent_id: int | None, has_parent: bool) -> dict | None:
+def update_folder(
+    folder_id: int, name: str | None, parent_id: int | None, has_parent: bool, data: dict | None = None
+) -> dict | None:
     with get_conn() as conn:
         existing = conn.execute("SELECT * FROM folders WHERE id = ?", (folder_id,)).fetchone()
         if not existing:
             return None
         new_name = name if name is not None else existing["name"]
         new_parent = parent_id if has_parent else existing["parent_id"]
+        new_data = json.dumps(data) if data is not None else existing["data"]
         conn.execute(
-            "UPDATE folders SET name = ?, parent_id = ? WHERE id = ?",
-            (new_name, new_parent, folder_id),
+            "UPDATE folders SET name = ?, parent_id = ?, data = ? WHERE id = ?",
+            (new_name, new_parent, new_data, folder_id),
         )
         row = conn.execute("SELECT * FROM folders WHERE id = ?", (folder_id,)).fetchone()
-        return dict(row)
+        return _folder_out(row)
 
 
 def delete_folder(folder_id: int) -> bool:

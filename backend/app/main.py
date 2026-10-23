@@ -94,6 +94,20 @@ def tree():
     return db.get_tree()
 
 
+class GlobalsUpdate(BaseModel):
+    data: dict
+
+
+@api.get("/globals")
+def get_globals():
+    return db.get_globals()
+
+
+@api.put("/globals")
+def put_globals(body: GlobalsUpdate):
+    return db.set_globals(body.data)
+
+
 class FolderCreate(BaseModel):
     name: str
     parent_id: Optional[int] = None
@@ -107,6 +121,7 @@ def create_folder(body: FolderCreate):
 class FolderUpdate(BaseModel):
     name: Optional[str] = None
     parent_id: Optional[int] = None
+    data: Optional[dict] = None
 
 
 @api.patch("/folders/{folder_id}")
@@ -117,6 +132,7 @@ def update_folder(folder_id: int, body: FolderUpdate):
         body.name,
         body.parent_id,
         has_parent="parent_id" in raw_keys,
+        data=body.data,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Folder not found")
