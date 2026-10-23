@@ -301,6 +301,8 @@ class PrimeLink:
         while self.dev.read(self.report + 1, 10):
             pass
 
+    last_reports = 0
+
     WRITE_TIMEOUT = 5.0
     REOPEN_AFTER_WRITE = True
 
@@ -335,9 +337,22 @@ class PrimeLink:
         `first` limits the wait for the reply to start (a G2 answers in
         about 0.1 s or not at all); `timeout` then limits the whole reply.
         A report that cannot start this reply -- a late answer to an earlier
-        request, such as a ready check's 'Y' -- is skipped."""
+        request, such as a ready check's 'Y' -- is skipped.
+
+        Measured on a G2 plugged straight into a Windows PC (2026-10-23): it
+        sends every file reply twice, and the second copy can start before
+        the first has finished, so their reports interleave. Both copies
+        number their reports 0, 1, 2, ... and carry the same bytes, so each
+        report is put in its place by its number and a repeat is dropped;
+        the reply's checksum (parse_file_reply) still catches a mix-up with
+        some other reply. Past 255 reports the numbers wrap and a place
+        cannot be told from the number alone, so such a reply is read in
+        order, starting again whenever a new copy begins."""
+        cap = self.report - 1
+        parts = {}
         msg = bytearray()
         expect = 1 if cmd == CMD_CHECK_READY else None
+        need = None
         index = 0
         start = time.time()
         deadline = start + (first or timeout)
@@ -352,27 +367,49 @@ class PrimeLink:
             seq, payload = rep[0], rep[1:self.report]
             if seq == 0xFF:
                 continue  # out-of-band report
-            if index == 0:
-                head = payload[:1]
-                if cmd == CMD_CHECK_READY and head not in (b"\xff", b"\x59"):
-                    continue
-                if cmd == CMD_FILE and head not in (bytes([CMD_FILE]), bytes([CMD_BACKUP])):
+            starts = seq == 0 and (
+                payload[:1] in (bytes([0xFF]), bytes([0x59])) if cmd == CMD_CHECK_READY
+                else payload[:1] in (bytes([CMD_FILE]), bytes([CMD_BACKUP])))
+            if not parts and not msg:
+                if not starts:
                     continue
                 deadline = start + timeout  # it has started; allow the rest
-            if seq != index % 255:
-                raise LinkError("reply out of sequence (%d, expected %d)" % (seq, index % 255))
-            index += 1
-            msg += payload
-            if expect is None and len(msg) >= 6:
-                if msg[0] == CMD_BACKUP:
-                    return bytes(msg[:1])
-                if msg[1] != 0x01:
-                    raise LinkError("unexpected reply header %s" % msg[:6].hex())
-                expect = 6 + int.from_bytes(msg[2:6], "big")
+                if cmd == CMD_CHECK_READY:
+                    return payload[:1]
+                if payload[0] == CMD_BACKUP:
+                    return payload[:1]
+                if payload[1] != 0x01:
+                    raise LinkError("unexpected reply header %s" % payload[:6].hex())
+                expect = 6 + int.from_bytes(payload[2:6], "big")
                 if expect > 64 * 1024 * 1024:
                     raise LinkError("implausible reply length")
-            if expect is not None and len(msg) >= expect:
+                need = max(1, -(-expect // cap))
+            if need <= 255:
+                parts.setdefault(seq, payload)
+                if len(parts) >= need and all(i in parts for i in range(need)):
+                    self.last_reports = need
+                    return b"".join(parts[i] for i in range(need))[:expect]
+                continue
+            # Too long to place by number: in order, restarting on a new copy.
+            if starts:
+                msg, index = bytearray(), 0
+            if seq != index % 255:
+                continue
+            index += 1
+            msg += payload
+            if len(msg) >= expect:
+                self.last_reports = need
                 return bytes(msg[:expect])
+
+    def _settle(self, quiet=1.0, limit=20.0):
+        """Reads and drops whatever the calculator is still sending, until it
+        has been quiet for `quiet` seconds: late answers to earlier requests
+        must not meet the next one."""
+        end = time.time() + limit
+        last = time.time()
+        while time.time() - last < quiet and time.time() < end:
+            if self.dev.read(self.report + 1, 50):
+                last = time.time()
 
     def exchange(self, message, timeout=None):
         self._drain()
@@ -388,40 +425,45 @@ class PrimeLink:
             return False
         return bool(r) and r[0] in (0xFF, 0x59)
 
-    # Measured on a G2 (over VirtualHere): a request is usually answered in
-    # about 0.1 s, but while the calculator is still storing a note it has
-    # just received, answers come seconds late -- and a late answer to one
-    # request can arrive while the next is waiting. Every answer names the
-    # note it carries, so an answer for another note is set aside, not taken
-    # for this one. A note that does not exist is never answered at all.
-    GET_ATTEMPTS = 5
-    FIRST_REPLY = 2.5
     WHOLE_REPLY = 60.0
 
-    def get_object(self, name, ftype):
-        for _ in range(self.GET_ATTEMPTS):
-            self.check_ready(timeout=2.0)
-            self._drain()
-            self._send(file_message(CMD_REQUEST_FILE, name, ftype))
-            end = time.time() + self.FIRST_REPLY
-            while time.time() < end:
-                try:
-                    reply = self._reply(CMD_FILE, self.WHOLE_REPLY, first=max(0.05, end - time.time()))
-                except TimeoutError:
-                    break
-                got = parse_file_reply(reply)
-                if got is None:
-                    return None  # the calculator says it has no such object
-                if got[1] == name and got[0] == ftype:
-                    return got[2]
-                # someone else's late answer: keep waiting for ours
+    # How the G2 behaves, measured plugged straight into a Windows PC
+    # (2026-10-23): it works through requests strictly one at a time, in the
+    # order they came, and keeps the rest waiting -- ready checks included --
+    # for as long as that takes (a backup, about 12 s, holds up everything
+    # sent after it). Nothing is dropped, except a request for a note it does
+    # not have, which is never answered. So a request that was given up on
+    # and sent again is answered twice, later, in the middle of whatever is
+    # asked next: the "reads one or two notes, then stops" failure. Hence:
+    # one request at a time, waited for patiently, never re-sent blindly.
+    PATIENCE = 30.0
+
+    def get_object(self, name, ftype, patience=None):
+        """One request, waited for: its answer, or None after `patience`
+        seconds (a note the calculator does not have is never answered).
+        Answers for other notes that arrive first -- left over from earlier
+        requests -- are passed over."""
+        self._drain()
+        self._send(file_message(CMD_REQUEST_FILE, name, ftype))
+        end = time.time() + (patience or self.PATIENCE)
+        while time.time() < end:
+            try:
+                got = parse_file_reply(self._reply(CMD_FILE, self.WHOLE_REPLY, first=max(0.05, end - time.time())))
+            except TimeoutError:
+                break
+            except LinkError:
+                continue  # a reply mixed up with another; ours may follow
+            if got is None:
+                return None  # the calculator says it has no such object
+            if got[1] == name and got[0] == ftype:
+                self._settle(0.3)  # the second copy of this reply
+                return got[2]
         return None
 
     def put_object(self, name, ftype, content):
         content = bytes(content)
         if ftype in (TYPE_NOTE, TYPE_PROGRAM) and content[:2] == b"\xff\xfe":
             content = content[2:]  # the firmware refuses a byte order mark
-        self.check_ready(timeout=self.FIRST_REPLY)
         self._drain()
         self._send(file_message(CMD_FILE, name, ftype, content))
         try:
@@ -439,40 +481,92 @@ class PrimeLink:
             self._reopen()
 
     def _reopen(self, wait=8.0):
+        """A fresh connection, then a ready check waited for patiently: the
+        calculator answers it only after whatever it is still doing. Opening
+        and the first send can fail for a moment after a write; that is
+        tried again until `wait` runs out."""
         hid = _hid()
         self.close()
         end = time.time() + wait
         last = None
-        while time.time() < end:
+        while True:
             time.sleep(0.4)
             try:
                 devs = find_calculators()
-                if not devs:
-                    continue
-                self.info = devs[0]
-                self.dev = hid.device()
-                self.dev.open_path(self.info["path"])
-                self.dev.set_nonblocking(0)
-                if self.check_ready(timeout=2.0):
-                    return
-                self.close()
+                if devs:
+                    self.info = devs[0]
+                    self.dev = hid.device()
+                    self.dev.open_path(self.info["path"])
+                    self.dev.set_nonblocking(0)
+                    if self.check_ready(timeout=self.PATIENCE):
+                        return
+                    raise LinkError("the calculator did not answer after a write")
             except (IOError, OSError, LinkError) as e:
                 last = e
                 self.close()
-        raise LinkError("the calculator did not come back after a write%s"
-                        % (" (%s)" % last if last else ""))
+                if isinstance(e, LinkError) and "did not answer" in str(e):
+                    raise
+            if time.time() > end:
+                raise LinkError("the calculator did not come back after a write%s"
+                                % (" (%s)" % last if last else ""))
 
-    def get_note(self, name):
+    def get_note(self, name, patience=None):
         """The note's text, or None if the calculator has no such note."""
-        content = self.get_object(name, TYPE_NOTE)
+        content = self.get_object(name, TYPE_NOTE, patience)
         return None if content is None else note_text(content)
+
+    MARK_NOTE = "CVMARK"
+
+    def backup_notes(self, whole=300.0):
+        """Every note on the calculator, {name: text}, from one backup
+        request (0xF9): the calculator streams all its objects and ends with
+        an F9 frame (about 12 s). Prime Connection Kit reads a calculator this
+        way; it is one request where reading note by note is dozens.
+
+        A backup asked for earlier and still waiting would look just like
+        this one, so first a note CVMARK is written with a new token: the
+        calculator handles requests in order, so the first backup holding
+        that token is this one, and shows everything written before it.
+        Answers (notes, complete)."""
+        token = "m" + os.urandom(5).hex()
+        self.put_object(self.MARK_NOTE, TYPE_NOTE, note_bytes(token))
+        self._send(bytes([CMD_BACKUP]))
+        notes = {}
+        end = time.time() + whole
+        while time.time() < end:
+            try:
+                reply = self._reply(CMD_FILE, 60.0, first=max(1.0, end - time.time()))
+            except TimeoutError:
+                break
+            except LinkError:
+                continue
+            if reply[:1] == bytes([CMD_BACKUP]):
+                if notes.get(self.MARK_NOTE) == token:
+                    self._settle(0.5, 10.0)
+                    return notes, True
+                notes = {}  # an older backup's stream: not ours
+                continue
+            try:
+                got = parse_file_reply(reply)
+            except LinkError:
+                continue  # a damaged frame; its copy follows
+            if got and got[0] == TYPE_NOTE:
+                notes[got[1]] = note_text(got[2])  # a later copy is newer
+        return notes, False
 
     def put_note(self, name, text, new=False):
         """Writes a note. An existing note keeps its shape, which costs a
-        read; `new` skips that read, since a request for a note that does
-        not exist goes unanswered and costs both waits (about 20 s)."""
-        existing = None if new else self.get_object(name, TYPE_NOTE)
+        read; `new` skips that read (CalcVault's own notes need no shape)."""
+        existing = None if new else self.get_object(name, TYPE_NOTE, patience=5.0)
         self.put_object(name, TYPE_NOTE, note_bytes(text, existing))
+
+    KEY_ESC = 4  # the key numbers GETKEY answers
+
+    def send_key(self, code):
+        """Presses one key on the calculator (0xEC, as Prime Connection Kit
+        sends it); measured: Esc (4) closes a program's CHOOSE dialog."""
+        self._drain()
+        self._send(bytes([0xEC, 0x01, 0x00, 0x00, 0x00, 0x01, code]))
 
     def put_program(self, name, source):
         self.put_object(name, TYPE_PROGRAM, source.encode("utf-16-le"))

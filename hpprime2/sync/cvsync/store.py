@@ -191,8 +191,18 @@ def read_vault(target, cache=None, log=None):
 
     `cache` is {slot: {"rev": rev, "lines": lines}} from the last sync (or a
     function from the device id to it); a calculator whose rev matches is
-    not read again."""
-    layout = {"format": 2, "slot": {}, "rev": {}, "lines": {}}
+    not read again.
+
+    A calculator whose note the target can say for certain is not there
+    (UsbTarget, after a complete backup) comes back with "lines": None and
+    its slot in layout["missing"]: a sync fills those in (sync.fill_missing)
+    and writes the note again. A note that merely did not arrive still
+    stops the read, so a lost answer is never taken for an empty
+    calculator."""
+    layout = {"format": 2, "slot": {}, "rev": {}, "lines": {}, "missing": []}
+    if hasattr(target, "prefetch"):
+        target.prefetch()
+    present = getattr(target, "present", lambda name: None)
     text = target.read()
     if text is None or not text.strip():
         return empty_vault(), layout
@@ -210,20 +220,28 @@ def read_vault(target, cache=None, log=None):
     for c in d[4]:
         cid, slot, rev = c[0], c[4], c[5]
         known = cache.get(slot)
-        if known and rev and known.get("rev") == rev:
+        lines = None
+        if present(calc_note(slot)) is False:
+            layout["missing"].append(slot)
+        elif known and rev and known.get("rev") == rev:
             lines = known["lines"]
         else:
             note = target.read(calc_note(slot))
-            if note is None:
+            if note is None and present(calc_note(slot)) is False:
+                layout["missing"].append(slot)
+            elif note is None:
                 raise StoreError("the note %s for %r is missing or did not arrive; nothing was changed. "
                                  "Try again." % (calc_note(slot), c[2]))
-            lines = lines_from_text(note)
-            fetched += 1
+            else:
+                lines = lines_from_text(note)
+                fetched += 1
         layout["slot"][cid] = slot
         layout["rev"][slot] = rev
         # Its own copy: what the calculator holds must not change when the
-        # vault handed back is edited.
-        layout["lines"][slot] = json.loads(json.dumps(lines))
+        # vault handed back is edited. A missing note has none, so it is
+        # written again.
+        if lines is not None:
+            layout["lines"][slot] = json.loads(json.dumps(lines))
         calcs.append({"id": cid, "folder": c[1], "name": c[2], "locked": c[3] == "1", "lines": lines})
     if log:
         log("read the index and %d of %d calculators" % (fetched, len(calcs)))
@@ -242,15 +260,38 @@ def write_verified(target, name, text, tries=3, new=False):
     raise StoreError("the calculator did not keep %s after %d tries; run the sync again" % (name, tries))
 
 
-def write_vault(target, vault, layout, slot_of=None, log=None):
+def write_verified_many(target, items, tries=3):
+    """Writes several notes, then reads them all back, sending again the ones
+    that did not arrive intact. `items`: [(name, text, new)]. On USB the
+    reads after a write may all come from one backup (UsbTarget), so
+    checking them together costs one backup rather than one per note."""
+    pending = list(items)
+    for attempt in range(tries):
+        for name, text, new in pending:
+            target.write(text, name, new=new and attempt == 0)
+        bad = []
+        for name, text, new in pending:
+            back = target.read(name)
+            if back is None or back.strip() != text.strip():
+                bad.append((name, text, new))
+        if not bad:
+            return attempt + 1
+        pending = bad
+    raise StoreError("the calculator did not keep %s after %d tries; run the sync again"
+                     % (", ".join(n for n, _, _ in pending), tries))
+
+
+def write_vault(target, vault, layout, slot_of=None, log=None, extra=()):
     """Writes the vault in the split layout, sending only the calculators
     whose lines differ from what the calculator holds (layout, from
     read_vault). `slot_of` maps the vault's calculator ids to slots when the
-    sync has given calculators new ids. Answers the new cache."""
+    sync has given calculators new ids. `extra`: more notes to write first,
+    [(name, text, new)] (the shared lines). Everything is written, the index
+    last, then checked together. Answers the new cache."""
     slot_of = dict(layout["slot"] if slot_of is None else slot_of)
     used = set(slot_of.values()) | set(layout["lines"])
     nxt = max([int(s) for s in used if s.isdigit()] + [0]) + 1
-    entries, cache, written = [], {}, 0
+    entries, cache, items = [], {}, []
     for i, c in enumerate(vault["calcs"]):
         slot = slot_of.get(c["id"])
         if slot is None:
@@ -261,15 +302,15 @@ def write_vault(target, vault, layout, slot_of=None, log=None):
         if layout["format"] != 2 or known is None or not rev or not _same_lines(known, c["lines"]):
             # Unique, not a timestamp: two writes in one second must differ.
             rev = "p" + uuid.uuid4().hex[:10]
-            write_verified(target, calc_note(slot), lines_to_text(c["lines"]), new=known is None)
-            written += 1
-            if log and written % 10 == 0:
-                log("  ... %d calculators written" % written)
+            items.append((calc_note(slot), lines_to_text(c["lines"]), known is None))
         entries.append([c["id"], c["folder"], c["name"], "1" if c["locked"] else "0", slot, rev])
         cache[slot] = {"rev": rev, "lines": json.loads(json.dumps(c["lines"]))}
+    written = len(items)
     index = format_list([MAGIC2, vault["dev"], vault["next"],
                          [[f["id"], f["parent"], f["name"]] for f in vault["folders"]], entries])
-    write_verified(target, NOTE, index)
+    # The calculators' notes before the index that points at them, then all
+    # checked together: on USB that is one backup.
+    write_verified_many(target, list(extra) + items + [(NOTE, index, False)])
     if log:
         log("wrote the index and %d of %d calculators" % (written, len(entries)))
     return cache
@@ -278,49 +319,55 @@ def write_vault(target, vault, layout, slot_of=None, log=None):
 # ---------------------------------------------------------- where it lives
 
 class UsbTarget:
-    """A calculator on USB."""
+    """A calculator on USB.
+
+    A sync reads everything at once with a backup (prefetch, about 12 s) and
+    serves its reads from that; a read after something was written takes a
+    new backup, so a sync's checks after writing cost one backup in all.
+    CVREV, which is polled and fits in one report, is always asked for by
+    name. See primelink.PrimeLink for why notes are not read one by one."""
 
     def __init__(self, log=None):
         from .primelink import PrimeLink
         self.link = PrimeLink(log=log)
         self.label = "calculator on USB"
+        self.snap = None  # {name: text} from the last backup, or None
+        self.snap_complete = False
+
+    def _snapshot(self):
+        self.snap, self.snap_complete = self.link.backup_notes()
+        if not self.snap_complete:
+            from .primelink import LinkError
+            raise LinkError("the calculator did not finish sending its notes. Make sure it is on the "
+                            "Home screen or in CalcVault 2, then try again.")
+        return self.snap
+
+    def prefetch(self):
+        """Everything at once, at the start of a sync (store.read_vault)."""
+        self._snapshot()
+
+    def present(self, name):
+        """True or False when a complete backup says, None when unknown."""
+        if self.snap is None or not self.snap_complete:
+            return None
+        return name in self.snap
 
     def read(self, name=NOTE):
-        text = self.link.get_note(name)
-        if text is not None:
-            return text
-        if name.startswith("CVC"):
-            # A calculator's note listed in the index must exist; a missing
-            # answer is the link, so ask again on a fresh connection.
-            for _ in range(2):
-                self.link._reopen()
-                text = self.link.get_note(name)
-                if text is not None:
-                    return text
-            return None
-        if name != NOTE:
-            return text
-        # No answer. A G2 sometimes leaves a request unanswered, and reading
-        # an unanswered CVDATA as "no vault" would make a sync replace the
-        # calculator's data, so try again on fresh connections, and give up
-        # loudly unless the calculator really has no CalcVault notes.
-        for _ in range(3):
-            self.link._reopen()
-            text = self.link.get_note(name)
-            if text is not None:
-                return text
-        for other in (REV_NOTE, "CVBAK", "CVSET"):
-            if self.link.get_note(other) is not None:
-                from .primelink import LinkError
-                raise LinkError("the calculator has CalcVault data but did not answer when asked for "
-                                "it. Make sure it is on the Home screen with nothing open, then try again.")
-        return None
+        if self.snap is None or not self.snap_complete:
+            self._snapshot()
+        return self.snap.get(name)
 
     def write(self, text, name=NOTE, new=False):
-        self.link.put_note(name, text, new=new)
+        # CalcVault's notes need no particular shape, so none is read first.
+        self.link.put_note(name, text, new=True)
+        # The backup is out of date now: the next read takes a new one.
+        self.snap_complete = False
 
     def read_rev(self):
-        return self.read(REV_NOTE)
+        # Always asked for, never taken from a backup: this is how a change
+        # made on the calculator meanwhile is noticed. It fits in one report,
+        # which a G2 has answered every time.
+        return self.link.get_note(REV_NOTE)
 
     def write_rev(self, token):
         self.write(token, REV_NOTE)
@@ -330,6 +377,14 @@ class UsbTarget:
         the plain shape without first reading the old one, which saves a
         round trip, and a request that goes unanswered when it is new."""
         self.link.put_note(name, text, new=True)
+
+    def close_box(self):
+        """Closes CalcVault 2's link box, if it is up (its note CVBOX), so the
+        app shows at once what was just sent: Esc is pressed only then."""
+        if self.link.get_note("CVBOX", patience=5.0) == "up":
+            self.link.send_key(self.link.KEY_ESC)
+            return True
+        return False
 
     def install(self, name, source):
         self.link.put_program(name, source)
@@ -380,6 +435,9 @@ class FolderTarget:
 
     def write_quick(self, name, text):
         self.write(text, name)
+
+    def close_box(self):
+        return False
 
     def install(self, name, source):
         raise StoreError("installing into a folder is done with hp-prime-kit's hpprime install")

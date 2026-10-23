@@ -10,8 +10,10 @@
 //   fakeG2.busy = true      stops answering, like a G2 running a program
 //   fakeG2.appSave(slot, linesText)   a save the way CalcVault 2 makes one
 //
-// Like a real G2 it never answers a request for a note it does not have,
-// and sends no acknowledgement for a note it is sent.
+// Like a real G2 (measured 2026-10-23) it never answers a request for a note it
+// does not have, sends no acknowledgement for a note it is sent, sends every
+// file reply twice, and answers a backup request (F9) with every note followed
+// by an F9 end frame.
 (function () {
   const HP = window.CalcVaultHP;
   const REPORT = 1024;
@@ -44,7 +46,17 @@
       const payload = new Uint8Array(data.buffer, data.byteOffset + 1, data.byteLength - 1);
       if (!this._in) {
         if (payload[0] === 0xff) {
-          this._reply(Uint8Array.of(0xff));
+          this._reply(Uint8Array.of(0x59));
+          return;
+        }
+        if (payload[0] === 0xf9) {
+          this.log.push('backup');
+          for (const [name, text] of Object.entries(this.notes)) {
+            const msg = HP.fileMessage(0xf7, name, 5, HP.noteBytes(text, new Uint8Array(0)));
+            this._reply(msg);
+            this._reply(msg);
+          }
+          this._reply(Uint8Array.of(0xf9, 0, 0, 0, 0, 0));
           return;
         }
         if (payload[1] !== 0x01) return;
@@ -73,7 +85,9 @@
         this.log.push('read ' + name);
         if (name in this.notes) {
           const content = HP.noteBytes(this.notes[name], new Uint8Array(0));
-          this._reply(HP.fileMessage(0xf7, name, msg[6], content));
+          const reply = HP.fileMessage(0xf7, name, msg[6], content);
+          this._reply(reply);
+          this._reply(reply); // a G2 sends every file reply twice
         }
       } else if (msg[0] === 0xf7) {
         this.log.push('write ' + name);
@@ -83,6 +97,8 @@
 
     _reply(message) {
       const reports = HP.fragment(message, REPORT - 1);
+      // Replies leave in order, one after another, as on the calculator.
+      this._t = Math.max(this._t || 0, performance.now()) + 15 + 5 * reports.length;
       setTimeout(() => {
         for (const r of reports) {
           const full = new Uint8Array(REPORT);
@@ -93,7 +109,7 @@
           ev.reportId = 0;
           this.dispatchEvent(ev);
         }
-      }, 15);
+      }, this._t - performance.now());
     }
 
     // A save as CalcVault 2 makes one: the calculator's note, a new rev for

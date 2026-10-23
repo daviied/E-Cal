@@ -35,8 +35,9 @@ labels, roles) on the PC, and do the math on the calculator.
   typed without touching the screen.
 - **Back where you left off.** Leave CalcVault with a calculator open
   (the Home key) and it reopens that calculator next time.
-- **Online mode** (below): stays in sync while CalcVault is open, shows
-  **online** in its title bar, and opens what you open in the web app.
+- **Online mode** (below): stays in sync while CalcVault is open (through
+  a small "linked to the PC" box it shows when idle), shows **online** in
+  its title bar, and opens what you open in the web app.
 
 ```
 calc/CALCVAULT2.txt       the calculator app (HP PPL source)
@@ -81,11 +82,13 @@ row) to open, **Esc** to go up. Soft keys: Open, New, Name, Move, Del, Exit.
 **Settings** (Menu > Settings, or the Menu key in a folder):
 
 - *On-screen keyboard*: on or off (also **Hide**/**Keys** while typing).
-- *Let the PC sync while open*: on (the default) makes the app sleep a few
-  milliseconds between key checks, so the calculator can answer the PC
-  while CalcVault is open. Turn it off only if typing ever feels sluggish.
+- *Link to the PC when idle*: on (the default), after 15 s without a key
+  press CalcVault waits in a small **linked to the PC** box, the only way
+  the PC can reach a calculator while CalcVault is open (see Online mode).
+  Enter or Esc closes it.
 - *Follow the web app*: in online mode, open on the calculator whatever
   calculator you open in the web app.
+- *Link to the PC now*: opens the box straight away.
 
 **Locked calculators.** Touch an Input's box and type straight into it; the
 results update when you press **Enter** (which moves on to the next Input),
@@ -187,33 +190,31 @@ console window, for a browser without WebHID. Use one or the other.
 Either way, while it runs and the calculator is plugged in with CalcVault 2
 open:
 
-- Changes on either side are copied across within a second or two.
+- **Leave the calculator alone for 15 s** and CalcVault shows a small
+  "CalcVault: linked to the PC" box. While it is up, changes on either side
+  are copied across (a sync takes about half a minute: it reads the
+  calculator with one backup, about 15 s, and checks what it wrote with
+  another). When the PC has sent something to the calculator, it presses
+  Esc for you: the box closes and the new data shows. Otherwise close it
+  with Enter or Esc whenever you want to carry on; what you change is sent
+  the next time the box is up.
 - The calculator's title bar shows a green **online** badge (the page or
   the PC tool writes a heartbeat every few seconds; the badge goes after
   about 12 s without).
 - Opening a calculator in the web app opens it on the calculator too
   (Settings > Follow the web app).
 
-**The one thing not yet known.** The first version found that a G2 does not
-answer USB while a program is running: it was measured with CalcVault
-checking the keys flat out. CalcVault 2 sleeps briefly between checks
-(Settings > Let the PC sync while open) so the calculator can get to its
-USB; whether a real G2 then answers has not been tried yet. To find out,
-with CalcVault 2 open on the calculator:
+**Why the box.** Measured on a G2 (2026-10-23): while a program runs, the
+calculator answers the PC only while the program waits in a system dialog
+such as a menu (CHOOSE). A program's own key loop keeps it from answering,
+even with `WAIT(0.05)` naps or `WAIT(-1)` in between
+(`dev/probes/CVWAIT.txt`). So CalcVault waits in a dialog when idle, and
+notes `CVBOX` "up" meanwhile; the PC presses Esc (key command `0xEC`) only
+when that note says the box is up, never anywhere else. Requests the PC
+makes while the box is closed wait in the calculator's queue and are
+answered when it opens again.
 
-```
-cd sync
-python tests/open_probe.py
-```
-
-It asks the calculator for a note once a second and prints whether it
-answered (it only reads). Without Python: switch Online on in the web app
-and open CalcVault 2 on the calculator; the sidebar button says **HP Prime:
-online** when it answers, **waiting** when it does not. If it answers, online mode works as described. If
-it does not, online mode still works but only syncs while CalcVault is
-closed: leave CalcVault with the Home key, wait for the PC window to say
-"synced", and reopen it (it comes back to the same calculator). The other
-way around a firmware limit is a USB host link instead of the PC's: the
+The other way around this is a USB host link instead of the PC's: the
 calculator's `USBOpen`/`USBSend`/`USBRecv` commands talk to a device
 plugged *into* the calculator, which is what `../../calcvault-pi` (a
 Raspberry Pi Zero 2 W on an OTG cable, with its own Wi-Fi) is built on.
@@ -310,8 +311,12 @@ first).
   calculator (3 s), and a calculator that stops answering and comes back.
   Whether Chrome lists a real G2 in its device chooser is the same unknown
   as for the web app's sync panel.
-- **Online mode with CalcVault open on a real G2** is the open question:
-  see "The one thing not yet known" above, and `sync/tests/open_probe.py`.
+- **Online mode with CalcVault 2 open on a real G2** works through the link
+  box, run with the PC tool: an edit on the calculator reached the web app,
+  an edit in the web app reached the calculator and the box closed by
+  itself to show it, the online badge showed, and opening a calculator in
+  the web app opened it on the calculator. The browser's online mode does
+  the same through the same code paths, tested against a simulated G2.
 - **The sync logic** is tested against a real CalcVault backend
   (`sync/tests/test_sync_live.py`), and the shared-lines note by
   `sync/tests/test_shared.py`.
@@ -319,14 +324,54 @@ first).
   math.js: 44 expressions evaluate to the same number on both sides
   (`dev/mlcheck.py`).
 - **USB** follows the protocol as measured on a G2 by Prime Connection Kit
-  (github.com/56phil/prime_connection_kit), ported to Python. Syncing a
-  real G2 has worked, though not reliably: requests sometimes stall or time
-  out, which the sync retries but which online mode, writing every few
-  seconds, will meet more often. If USB does not work at all, the fallback
+  (github.com/56phil/prime_connection_kit), ported to Python, and since
+  2026-10-23 the way the link is used is measured on your own G2 (see the
+  next section). With it, a full sync of that calculator (131 calculators,
+  66 of whose notes an earlier sync had lost) went through, and reading it
+  again found everything in place. The web app's panel uses the same
+  approach; it was run against a simulated G2 that behaves the same way,
+  not yet against the real one. If USB does not work at all, the fallback
   is `python -m cvsync sync --folder DIR` on a folder holding the
   calculator's CVDATA.hpnote (the Connectivity Kit mirrors it to
   `Documents\HP Connectivity Kit\Calculators\<name>`), then dragging the
   updated CVDATA.hpnote back onto the calculator in the Connectivity Kit.
+
+## How the G2 talks over USB
+
+Measured on a G2 plugged straight into a Windows PC (2026-10-23). This is
+what made syncs "read one or two notes, then stop":
+
+- **It works through requests strictly one at a time, in order,** and keeps
+  every other request waiting (ready checks too) until it gets to it. A
+  backup holds up everything after it for about 12 s. Nothing is dropped,
+  except a request for a note it does not have, which is never answered.
+- **It sends every file reply twice,** and the second copy can start before
+  the first has finished, so their USB reports interleave.
+
+So a request that was given up on and sent again was answered later, twice,
+in the middle of the next read, which the old code took as a broken reply,
+gave up on and asked again: the queue only grew (once to 18 backups, three
+minutes of sending). What the link does now (`sync/cvsync/primelink.py`,
+`frontend/hp.js`):
+
+- A reply is put together by report number, so overlapping copies are
+  harmless; its checksum still catches a real mix-up.
+- One request at a time, waited for patiently; never re-sent blindly.
+- A sync reads the calculator with **one backup** (`F9`, how Prime
+  Connection Kit reads one): about 12 s for everything, where by-name reads
+  were dozens of requests. Before it, a note `CVMARK` is written with a new
+  token, so the backup that holds that token is known to be this one (and
+  not an older one still in the queue) and shows everything written
+  before it. What a sync writes is checked with one more backup.
+- A complete backup also says for certain which notes are missing. An
+  earlier sync had lost 110 of this calculator's 115 calculator notes while
+  its index still listed them; such a calculator is now filled in from the
+  last sync (or the web app) and its note written again, instead of the
+  sync stopping at it.
+- CVREV, polled by live and online mode, fits in one report and is still
+  asked for by name; it has been answered every time.
+
+`sync/tests/stall_probe.py` and `sync/tests/open_probe.py` are the probes.
 
 ## Tests
 

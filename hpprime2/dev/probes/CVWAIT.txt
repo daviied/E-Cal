@@ -1,0 +1,33 @@
+// Probe: does a G2 answer USB while a program waits in WAIT(-1)?
+// (It does not while a program polls GETKEY, even with WAIT(0.05) naps; it
+// does while a program sits in CHOOSE, measured 2026-10-23.) Run it from the
+// Program Catalog while the PC runs its side; the note CVPHASE says which
+// phase the calculator was in whenever the PC gets an answer.
+
+EXPORT CVWAIT()
+BEGIN
+  LOCAL r, t0, n, s;
+  PRINT();
+  Notes("CVPHASE") := "1 WAIT(1) loop";
+  PRINT("Phase 1, 15 s: WAIT(1) loop. Hands off.");
+  t0 := TICKS;
+  WHILE TICKS - t0 < 15000 DO WAIT(1); END;
+  Notes("CVPHASE") := "2 WAIT(-1)";
+  PRINT("Phase 2: WAIT(-1). Hands off 30 s,");
+  PRINT("then tap the screen once, press 5,");
+  PRINT("then Esc three times to finish.");
+  n := 0;
+  t0 := TICKS;
+  REPEAT
+    r := WAIT(-1);
+    s := STRING(r);
+    PRINT(STRING(IP((TICKS - t0) / 100) / 10) + "s: " + s);
+    IF TYPE(r) == 0 THEN
+      IF r == 4 THEN n := n + 1; ELSE n := 0; END;
+    ELSE
+      n := 0;
+    END;
+  UNTIL n >= 3;
+  Notes("CVPHASE") := "done";
+  RETURN "done";
+END;

@@ -200,6 +200,39 @@ def calc_to_server(calc, base_entry, report):
     return data, dict(calc, lines=lines)
 
 
+def fill_missing(vault, layout, base, api, report):
+    """Gives every calculator whose note is missing on the calculator
+    (store.read_vault's layout["missing"]) lines to merge with: what the
+    last sync left there, so the merge counts it as unchanged on the
+    calculator, or, never synced, the web app's version. Either way its note
+    is written again, since layout has no lines for its slot. Answers how
+    many were filled."""
+    missing = set(layout.get("missing") or [])
+    if not missing:
+        return 0
+    b_c = (base or {}).get("calcs", {})
+    n = 0
+    for c in vault["calcs"]:
+        if c.get("lines") is not None or layout["slot"].get(c["id"]) not in missing:
+            continue
+        b = b_c.get(c["id"])
+        if b:
+            c["lines"] = copy.deepcopy(b["calc"]["lines"])
+        else:
+            try:
+                full = api.get_calc(c["id"]) if str(c["id"]).isdigit() else None
+            except Exception:  # noqa: BLE001 - deleted on the web meanwhile
+                full = None
+            srv = {"name": full["name"], "folder": str(full["folder_id"] or 0), "data": full["data"]} if full else None
+            c["lines"] = server_to_calc(srv, None, Report())["lines"] if srv else []
+        n += 1
+    if n:
+        report.warnings.append("%d calculator%s had no note on the calculator (lost by an earlier "
+                               "sync); %s written again from the last sync or the web app."
+                               % (n, "" if n == 1 else "s", "it is" if n == 1 else "they are"))
+    return n
+
+
 def run(vault, api, base, report, dry_run=False, log=print):
     """Merges. Answers (new vault, new base). `vault` is the calculator's,
     `base` the saved state for this calculator (or {})."""

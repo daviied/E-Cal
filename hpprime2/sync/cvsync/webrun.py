@@ -82,13 +82,19 @@ def sync_once(api, target, state_dir, say, confirm, auto=False, _depth=0):
     shared = sync.shared_text(api.tree())
     shared_changed = shared != state.get("shared")
 
+    # Notes an earlier sync lost on the calculator: filled in, written again.
+    repair = sync.Report()
+    sync.fill_missing(vault, layout, base, api, repair)
+    for w in repair.warnings:
+        say(w)
+
     plan = sync.Report()
     sync.run(vault, api, base, plan, dry_run=True)
     nothing = not (plan.to_web or plan.to_calc or plan.conflicts)
-    if nothing and not fresh and layout["format"] == 2 and not shared_changed:
+    if nothing and not fresh and layout["format"] == 2 and not shared_changed and not layout["missing"]:
         if not auto:
             say(plan.summary())
-        return {"code": 0, "changed": False, "summary": plan.summary()}
+        return {"code": 0, "changed": False, "summary": plan.summary(), "tree": api.tree()}
     say(plan.summary())
 
     risky = [x for x in plan.to_web + plan.to_calc if "deleted" in x] + plan.conflicts
@@ -119,6 +125,10 @@ def sync_once(api, target, state_dir, say, confirm, auto=False, _depth=0):
 
     report = sync.Report()
     new_vault, new_base = sync.run(vault, api, base, report)
+    # The web app as this merge left it, for online mode to compare with:
+    # an edit made after this, even while the calculator is still being
+    # written, is then seen as a change for the next sync.
+    tree = api.tree()
     # Ids made on the calculator are on the server now; remember them before
     # touching the calculator, in case the next step fails.
     state.update({"server": SERVER_KEY, "base": dict(base, pending=new_base["pending"])})
@@ -127,17 +137,14 @@ def sync_once(api, target, state_dir, say, confirm, auto=False, _depth=0):
     # Each calculator keeps its note (slot) when the sync gives it the web
     # app's id in place of one made on the calculator.
     slot_of = {new_base["pending"].get(cid, cid): slot for cid, slot in layout["slot"].items()}
+    extra = [(store.SHARED_NOTE, shared, "shared" not in state)] if shared_changed else []
     try:
-        cache = store.write_vault(target, new_vault, layout, slot_of, log=None if auto else say)
+        cache = store.write_vault(target, new_vault, layout, slot_of, log=None if auto else say, extra=extra)
     except store.StoreError as e:
         say("%s. The web app has been updated; run the sync again." % e)
         return {"code": 1, "changed": True, "summary": report.summary()}
     if shared_changed:
-        try:
-            store.write_verified(target, store.SHARED_NOTE, shared, new="shared" not in state)
-            state["shared"] = shared
-        except store.StoreError as e:
-            say("Shared lines: %s." % e)
+        state["shared"] = shared
     # Tells CalcVault, if it is open on the calculator, to reload.
     target.write_rev("p" + stamp())
     new_base["pending"] = {}
@@ -147,4 +154,4 @@ def sync_once(api, target, state_dir, say, confirm, auto=False, _depth=0):
     for w in report.warnings:
         say("  " + w)
     say("Done.")
-    return {"code": 0, "changed": True, "summary": report.summary()}
+    return {"code": 0, "changed": True, "summary": report.summary(), "tree": tree}

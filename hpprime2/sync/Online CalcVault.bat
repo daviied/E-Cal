@@ -1,6 +1,6 @@
 @echo off
 rem Online mode: CalcVault 2 on the HP Prime works as a remote for the web
-rem app. Keeps both in sync within a second or two while CalcVault 2 is open
+rem app. Keeps both in sync within about half a minute while CalcVault 2 is open
 rem on the calculator, shows "online" there, and opens on the calculator the
 rem calculator you open in the web app. Close HP's Connectivity Kit first.
 rem Leave this window open; close it to stop.

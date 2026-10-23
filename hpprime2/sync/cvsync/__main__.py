@@ -144,6 +144,12 @@ def sync_once(api, target, cfg, argv, interactive=True, quiet=False):
     shared = sync.shared_text(api.tree())
     shared_changed = shared != state.get("shared")
 
+    # Notes an earlier sync lost on the calculator: filled in, written again.
+    repair = sync.Report()
+    sync.fill_missing(vault, layout, base, api, repair)
+    for w in repair.warnings:
+        print(w)
+
     plan = sync.Report()
     sync.run(vault, api, base, plan, dry_run=True)
     nothing = not (plan.to_web or plan.to_calc or plan.conflicts)
@@ -154,7 +160,8 @@ def sync_once(api, target, cfg, argv, interactive=True, quiet=False):
     if dry:
         print("\n(dry run: nothing was changed)")
         return 0
-    if nothing and not fresh and layout["format"] == 2 and not shared_changed:
+    if nothing and not fresh and layout["format"] == 2 and not shared_changed and not layout["missing"]:
+        LAST_SIG[0] = web_signature(api)
         return 0
     risky = [x for x in plan.to_web + plan.to_calc if "deleted" in x] + plan.conflicts
     if risky and interactive and "--yes" not in argv:
@@ -180,6 +187,10 @@ def sync_once(api, target, cfg, argv, interactive=True, quiet=False):
 
     report = sync.Report()
     new_vault, new_base = sync.run(vault, api, base, report)
+    # The web app as this merge left it, for live and online mode to compare
+    # with: an edit made after this, even while the calculator is still being
+    # written, is then seen as a change for the next sync.
+    LAST_SIG[0] = web_signature(api)
     # Ids made on the calculator are on the server now; remember them
     # before touching the calculator, in case the next step fails.
     state.update({"server": cfg["server"], "base": dict(base, pending=new_base["pending"])})
@@ -188,17 +199,14 @@ def sync_once(api, target, cfg, argv, interactive=True, quiet=False):
     # Each calculator keeps its note (slot) when the sync gives it the web
     # app's id in place of one made on the calculator.
     slot_of = {new_base["pending"].get(cid, cid): slot for cid, slot in layout["slot"].items()}
+    extra = [(store.SHARED_NOTE, shared, "shared" not in state)] if shared_changed else []
     try:
-        cache = store.write_vault(target, new_vault, layout, slot_of, log=None if quiet else say)
+        cache = store.write_vault(target, new_vault, layout, slot_of, log=None if quiet else say, extra=extra)
     except store.StoreError as e:
         print("%s. The web app has been updated; run the sync again." % e)
         return 1
     if shared_changed:
-        try:
-            store.write_verified(target, store.SHARED_NOTE, shared, new="shared" not in state)
-            state["shared"] = shared
-        except store.StoreError as e:
-            print("Shared lines: %s." % e)
+        state["shared"] = shared
     # Tells CalcVault, if it is open, to reload.
     target.write_rev("p" + stamp())
     new_base["pending"] = {}
@@ -219,6 +227,9 @@ def sync_once(api, target, cfg, argv, interactive=True, quiet=False):
 
 def now():
     return datetime.datetime.now().strftime("%H:%M:%S")
+
+
+LAST_SIG = [None]  # web_signature as the last sync's merge left it
 
 
 def cmd_sync(argv):
@@ -261,14 +272,23 @@ def cmd_live(argv):
                 print("%s  calculator connected" % now())
                 waiting, last_rev = False, None
             rev = target.read_rev()
+            if rev is None and last_rev is not None:
+                # No answer: CalcVault (or another program) is open on it.
+                if not waiting:
+                    print("%s  the calculator is not answering; waiting (close CalcVault on it to sync)" % now())
+                waiting = True
+                time.sleep(3)
+                continue
+            waiting = False
             sig = last_sig
             if time.time() - last_web >= web_every:
                 sig = web_signature(api)
                 last_web = time.time()
             if last_rev is None or rev != last_rev or sig != last_sig:
+                LAST_SIG[0] = None
                 sync_once(api, target, cfg, argv, interactive=False, quiet=True)
+                last_sig = LAST_SIG[0] or web_signature(api)
                 last_rev = target.read_rev()
-                last_sig = web_signature(api)
                 last_web = time.time()
             time.sleep(every)
         except (LinkError, TimeoutError, OSError) as e:
@@ -320,6 +340,17 @@ def cmd_online(argv):
                 print("%s  calculator connected" % now())
                 waiting, last_rev, t_beat = False, None, 0.0
             rev = target.read_rev()
+            if rev is None and last_rev is not None:
+                # No answer: a program is running on it that does not let the
+                # calculator answer USB. Nothing is written until it answers.
+                if not waiting:
+                    print("%s  the calculator is not answering; waiting" % now())
+                waiting = True
+                time.sleep(3)
+                continue
+            if waiting:
+                print("%s  the calculator is answering again" % now())
+            waiting = False
             if sig is None or time.time() - t_web >= web_every:
                 sig = web_signature(api)
                 if has_focus:
@@ -327,14 +358,21 @@ def cmd_online(argv):
                     has_focus = focus is not None
                 t_web = time.time()
             if last_rev is None or rev != last_rev or sig != last_sig:
+                LAST_SIG[0] = None
                 sync_once(api, target, cfg, argv, interactive=False, quiet=True)
-                last_rev = target.read_rev()
-                sig = last_sig = web_signature(api)
+                sig = last_sig = LAST_SIG[0] or web_signature(api)
+                new_rev = target.read_rev()
+                # The PC wrote to the calculator: close the link box so the
+                # app shows it now.
+                if new_rev and new_rev != rev and new_rev.startswith("p") and target.close_box():
+                    print("%s  closed the link box on the calculator" % now())
+                last_rev = new_rev
             if focus and focus.get("calc_id") and focus.get("token") != last_focus:
                 # A calculator opened before this started is old news,
                 # unless it was opened just now.
                 if last_focus is not None or (focus.get("age") or 99) < 20:
                     target.write_quick(store.FOCUS_NOTE, "%s;%s" % (focus["calc_id"], focus["token"]))
+                    target.close_box()
                     print("%s  opened calculator %s on the calculator" % (now(), focus["calc_id"]))
                 last_focus = focus.get("token")
             if time.time() - t_beat >= beat_every:
@@ -346,7 +384,7 @@ def cmd_online(argv):
                 target.close()
                 target = None
                 print("%s  calculator not answering (%s). Waiting for it; if CalcVault is open on it, "
-                      "check its Settings > Let the PC sync while open." % (now(), e))
+                      "it answers while its \"linked to the PC\" box is up." % (now(), e))
             elif not waiting:
                 print("Waiting for the calculator: plug it in and turn it on.")
             waiting = True

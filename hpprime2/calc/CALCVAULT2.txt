@@ -51,10 +51,16 @@
 //            it keeps changing, the title bar says "online".
 //   CVFOCUS  "calcId;token" from the online bridge: the calculator last
 //            opened in the web app, which this app opens too (Follow the PC).
+//   CVBOX    "up" while the link box is open (the PC may close it with Esc
+//            once it has sent something), "down" otherwise.
 //   CVSET    "kb=1;nap=1;follow=1;open=<calcId>;": settings, and the
 //            calculator to reopen on the next start.
-// Between polls the app sleeps in short WAITs (nap=1), so the calculator's
-// USB stack gets time to answer the PC while CalcVault is open.
+// A G2 answers USB only while no program is running or a program waits in a
+// system dialog (CHOOSE); a program's own key loop keeps it from answering,
+// even with WAIT(0.05) or WAIT(-1) between polls (measured 2026-10-23). So
+// after 15 s without a key or touch, CalcVault waits in a small dialog,
+// "linked to the PC", while the PC syncs; Enter or Esc closes it and what the
+// PC sent is picked up (nap=1 in CVSET; Settings > Link to the PC when idle).
 // Typing: Enter in an Eq line saves it and opens a new Eq line below; new Eq
 // lines start hidden when locked; a strip of the calculator's variable names
 // above the keyboard types one with a tap.
@@ -112,6 +118,7 @@ cvHead(zs, zn);
 cvFind(zs, zsub);
 cvEvent(zidle);
 cvPoll();
+cvLinkBox();
 cvReload(zwarn);
 cvReadRev();
 cvLoadSet();
@@ -173,7 +180,8 @@ LOCAL cvPalS := 1;        // first palette entry on screen
 LOCAL cvPalN := 1;        // first entry of the next page
 LOCAL cvPalR := {};       // chips on screen: {x1, y1, x2, y2, entry}; entry 0 = next page
 LOCAL cvByEnter := 0;     // 1 when the last edit was finished with Enter
-LOCAL cvNap := 1;         // 1: idle in short WAITs so USB can be answered
+LOCAL cvNap := 1;         // 1: wait in the link box when idle (cvLinkBox)
+LOCAL cvIdle0 := 0;       // TICKS of the last key or touch
 LOCAL cvFollow := 1;      // 1: open what the web app opens (online)
 LOCAL cvOpenId := "";     // calculator to reopen at start (CVSET open=)
 LOCAL cvLink := "";       // CVLINK as last seen
@@ -1579,13 +1587,31 @@ BEGIN
   LOCAL zc;
   zc := 0;
   CHOOSE(zc, "Settings", IFTE(cvKb, "On-screen keyboard: on", "On-screen keyboard: off"),
-         IFTE(cvNap, "Let the PC sync while open: on", "Let the PC sync while open: off"),
-         IFTE(cvFollow, "Follow the web app: on", "Follow the web app: off"));
+         IFTE(cvNap, "Link to the PC when idle: on", "Link to the PC when idle: off"),
+         IFTE(cvFollow, "Follow the web app: on", "Follow the web app: off"),
+         "Link to the PC now");
   cvArmed := 0; cvDown := 0;
   IF zc == 1 THEN cvKb := 1 - cvKb; END;
   IF zc == 2 THEN cvNap := 1 - cvNap; END;
   IF zc == 3 THEN cvFollow := 1 - cvFollow; END;
-  IF zc >= 1 THEN cvSaveSet(); END;
+  IF zc >= 1 AND zc <= 3 THEN cvSaveSet(); END;
+  IF zc == 4 THEN cvLinkBox(); END;
+END;
+
+// Waits in a system dialog, the one time a running program lets a G2 answer
+// USB, so the PC can sync; then picks up what it sent. Enter or Esc closes it.
+cvLinkBox()
+BEGIN
+  LOCAL zc;
+  // CVBOX tells the PC the box is up, so that once it has sent something
+  // it may press Esc to close it (and never presses Esc anywhere else).
+  Notes("CVBOX") := "up";
+  zc := 0;
+  CHOOSE(zc, "CalcVault: linked to the PC", "Continue  (Enter or Esc)");
+  Notes("CVBOX") := "down";
+  cvArmed := 0; cvDown := 0;
+  cvIdle0 := TICKS;
+  cvPoll();
 END;
 
 cvConfirm(zmsg)
@@ -2090,10 +2116,6 @@ BEGIN
   LOCAL zk, zm, zp, zt0;
   zt0 := TICKS;
   WHILE 1 DO
-    // A short sleep between polls leaves the calculator time to answer
-    // USB, so the PC can sync while CalcVault is open (if this firmware
-    // answers then at all: see hpprime2/README.md).
-    IF cvNap THEN WAIT(0.05); END;
     zk := GETKEY;
     IF zk >= 0 THEN RETURN {1, zk}; END;
     zm := MOUSE;
@@ -2125,6 +2147,7 @@ BEGIN
   cvView := 0; cvCur := "0"; cvCI := 0; cvSel := 1; cvTop := 1;
   cvQuit := 0; cvExact := 0; cvArmed := 0; cvDown := 0; cvPend := {}; cvEdRow := 0;
   cvLoadSet();
+  IFERR Notes("CVBOX") := "down"; THEN END;
   cvRev := cvReadRev();
   cvLoad();
   cvLoadShared();
@@ -2141,15 +2164,22 @@ BEGIN
   // be waiting; without this it would open the first row.
   REPEAT ze := GETKEY; UNTIL ze < 0;
   zdirty := 1;
+  cvIdle0 := TICKS;
   REPEAT
     IF zdirty THEN cvDraw(); END;
     zdirty := 1;
     ze := cvEvent(1500);
+    IF ze(1) > 0 THEN cvIdle0 := TICKS; END;
     IFERR
       CASE
         IF ze(1) == 0 THEN
-          // Idle: pick up a live sync from the PC.
+          // Idle: pick up a live sync from the PC, and after a while wait in
+          // the link box so the PC can reach the calculator at all.
           zdirty := cvPoll();
+          IF cvNap AND TICKS - cvIdle0 > 15000 THEN
+            cvLinkBox();
+            zdirty := 1;
+          END;
         END;
         IF ze(1) == 1 THEN cvKey(ze(2)); END;
         IF ze(1) == 2 THEN

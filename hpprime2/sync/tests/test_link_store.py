@@ -133,8 +133,7 @@ class Link(unittest.TestCase):
         link.dev, link.report, link.log = fake, 1024, (lambda *_: None)
         link.WRITE_ACK_WINDOW = 0.05
         link.REOPEN_AFTER_WRITE = False
-        link.GET_ATTEMPTS = 2
-        link.FIRST_REPLY = 0.2
+        link.PATIENCE = 0.4
         link.REPLY_TIMEOUT = 0.2
         return link
 
