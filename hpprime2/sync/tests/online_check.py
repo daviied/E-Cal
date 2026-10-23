@@ -3,8 +3,9 @@ backend, with a folder standing in for the calculator.
 
     python tests/online_check.py http://127.0.0.1:8766 testpw
 
-What CalcVault 2 on the calculator relies on: the heartbeat note (CVLINK)
-keeps changing, a calculator opened in the web app is named in CVFOCUS,
+What CalcVault 2 on the calculator relies on: a heartbeat note (CVLINK),
+written once while the calculator answers, a calculator opened in the web
+app is named in CVFOCUS,
 the web app's shared lines reach CVSHR (and an edit to them is picked up),
 and edits still go both ways. Never point it at a real backend.
 """
@@ -46,8 +47,7 @@ def main(url, password):
         {"id": "a1", "role": "input", "hidden": False, "latex": "", "varName": "x", "label": "x",
          "value": "1", "expr": ""}]})
     proc = subprocess.Popen([sys.executable, "-m", "cvsync", "online", "--server", url, "--folder", calc,
-                             "--password-env", "CVTEST_PW", "--every", "0.5", "--web-every", "1",
-                             "--beat-every", "1"],
+                             "--password-env", "CVTEST_PW", "--every", "0.5", "--web-every", "1"],
                             cwd=os.path.join(os.path.dirname(__file__), ".."), env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     target = store.FolderTarget(calc)
@@ -62,8 +62,12 @@ def main(url, password):
         wait_for(lambda: calc_value() == "1", "first sync reaches the calculator")
         wait_for(lambda: "g=9.81" in (target.read(store.SHARED_NOTE) or ""), "shared lines reach CVSHR")
 
+        wait_for(lambda: (target.read(store.LINK_NOTE) or "").startswith("b"), "a heartbeat arrives")
         beat = target.read(store.LINK_NOTE)
-        wait_for(lambda: beat and target.read(store.LINK_NOTE) not in (None, beat), "the heartbeat changes")
+        time.sleep(3)
+        if target.read(store.LINK_NOTE) != beat:
+            raise SystemExit("FAIL the heartbeat was written again while the calculator kept answering")
+        print("ok   no further heartbeat while it keeps answering")
 
         api._call("PUT", "/api/hp-focus", {"calc_id": c["id"]})
         wait_for(lambda: (target.read(store.FOCUS_NOTE) or "").startswith("%d;" % c["id"]),

@@ -112,6 +112,20 @@ CHECKS = [
     ('cvJoin({{1,2}}, {{3,4},{5,6}})', [[1, 2], [3, 4], [5, 6]]),
     ('cvJoin({}, {{3,4}})', [[3, 4]]),
     ('cvJoin({{1,2}}, {})', [[1, 2]]),
+    # The calculator's own keys (codes: Vars 14 = A, 2 = 43, 3 = 44, +/- = 27, divide = 35)
+    ('cvKeyText(43, 0, 1)', "i"),
+    ('cvKeyText(44, 0, 1)', "π"),
+    ('cvKeyText(43, 0, 0)', "2"),
+    ('cvKeyText(27, 0, 1)', "abs("),
+    ('cvKeyText(35, 0, 1)', "^(-1)"),
+    ('cvKeyText(14, 1, 0)', "A"),
+    ('cvKeyText(14, 2, 0)', "a"),
+    ('cvKeyText(14, 3, 0)', "A"),
+    ('cvKeyText(14, 4, 0)', "a"),
+    ('cvKeyText(14, 3, 1)', "a"),
+    ('cvKeyText(14, 4, 1)', "A"),
+    ('cvKeyText(43, 3, 0)', "Z"),
+    ('cvKeyText(49, 0, 1)', "_"),
 ]
 
 

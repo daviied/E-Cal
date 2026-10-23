@@ -310,47 +310,53 @@ def cmd_live(argv):
 def cmd_online(argv):
     """Online mode: CalcVault 2 on the calculator works as a remote for the
     web app. The same two-way sync as `live`, but checked every second, and
-    meant to run while CalcVault is open on the calculator (it naps between
-    key polls so the calculator can answer USB). It also
+    meant to run while CalcVault 2 is open on the calculator: the calculator
+    answers USB while the app waits in its "linked to the PC" box (after
+    15 s idle), and the PC presses Esc to close the box once it has sent
+    something. It also
 
-      - writes a heartbeat note (CVLINK) every few seconds, which the app
-        shows as "online" in its title bar, and
+      - writes a heartbeat note (CVLINK) once each time the calculator starts
+        answering, which the app shows as "online" in its title bar (once,
+        not every few seconds: every write lands in the calculator's flash),
       - when a calculator is opened in the web app, writes its id to CVFOCUS
         and the app opens it too (Settings > Follow the web app).
 
-    While the calculator does not answer (unplugged, or a firmware that does
-    not answer while a program runs) it waits, like `live`, and syncs
-    whenever it can: the app then works offline, on what it last got."""
+    While the calculator does not answer (unplugged, or CalcVault open with
+    the box closed) it waits, and syncs whenever it can."""
     from .primelink import LinkError
     cfg_path = os.path.join(config_dir(), "config.json")
     cfg = load_json(cfg_path, {})
     api = connect_api(argv, cfg, cfg_path)
     every = float(opt(argv, "--every", "1"))
     web_every = float(opt(argv, "--web-every", "1.5"))
-    beat_every = float(opt(argv, "--beat-every", "4"))
     print("Online with %s. Leave this window open; Ctrl+C stops it." % cfg["server"])
     target, waiting = None, False
     last_rev, last_sig, sig = None, None, None
     focus, last_focus, has_focus = None, None, True
-    t_web = t_beat = 0.0
+    t_web = 0.0
+    beat_sent = False  # a heartbeat written since the calculator last went quiet
     while True:
         try:
             if target is None:
                 target = open_target(argv)
                 print("%s  calculator connected" % now())
-                waiting, last_rev, t_beat = False, None, 0.0
+                waiting, last_rev, beat_sent = False, None, False
             rev = target.read_rev()
             if rev is None and last_rev is not None:
                 # No answer: a program is running on it that does not let the
                 # calculator answer USB. Nothing is written until it answers.
                 if not waiting:
                     print("%s  the calculator is not answering; waiting" % now())
-                waiting = True
+                waiting, beat_sent = True, False
                 time.sleep(3)
                 continue
             if waiting:
                 print("%s  the calculator is answering again" % now())
             waiting = False
+            if not beat_sent:
+                # One heartbeat per stretch of answering (per link box).
+                target.write_quick(store.LINK_NOTE, "b" + uuid.uuid4().hex[:8])
+                beat_sent = True
             if sig is None or time.time() - t_web >= web_every:
                 sig = web_signature(api)
                 if has_focus:
@@ -375,9 +381,6 @@ def cmd_online(argv):
                     target.close_box()
                     print("%s  opened calculator %s on the calculator" % (now(), focus["calc_id"]))
                 last_focus = focus.get("token")
-            if time.time() - t_beat >= beat_every:
-                target.write_quick(store.LINK_NOTE, "b" + uuid.uuid4().hex[:8])
-                t_beat = time.time()
             time.sleep(every)
         except (LinkError, TimeoutError, OSError) as e:
             if target is not None:

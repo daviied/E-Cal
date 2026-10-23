@@ -47,8 +47,9 @@
 //            STRING() of {"CVSH1", globalLines, {{folderId, lines}, ...}}.
 //            A calculator evaluates the global lines, then those of each
 //            folder from the outermost down to its own, then its own lines.
-//   CVLINK   a token the PC's online bridge changes every few seconds; while
-//            it keeps changing, the title bar says "online".
+//   CVLINK   a token the PC's online bridge writes once each time the
+//            calculator starts answering it (once per link box); the title
+//            bar says "online" while the last link box got a new one.
 //   CVFOCUS  "calcId;token" from the online bridge: the calculator last
 //            opened in the web app, which this app opens too (Follow the PC).
 //   CVBOX    "up" while the link box is open (the PC may close it with Esc
@@ -128,7 +129,7 @@ cvKbText(zlab);
 cvKbLabel(zlab, zpg);
 cvDrawKb(zpg);
 cvDrawBox(zt, zp, zx1, zy1, zx2, zy2, zf);
-cvDrawEdit(ztitle, zt, zp, zpg, zal, zline);
+cvDrawEdit(ztitle, zt, zp, zpg, zal, zline, zsh);
 cvEdit(ztitle, zval, zline);
 cvInline(zix);
 cvSettings();
@@ -185,7 +186,7 @@ LOCAL cvIdle0 := 0;       // TICKS of the last key or touch
 LOCAL cvFollow := 1;      // 1: open what the web app opens (online)
 LOCAL cvOpenId := "";     // calculator to reopen at start (CVSET open=)
 LOCAL cvLink := "";       // CVLINK as last seen
-LOCAL cvLinkT := -100000; // TICKS when it last changed
+LOCAL cvOn := 0;          // 1 when the last link box got a heartbeat
 LOCAL cvWasOn := 0;       // online as last drawn
 LOCAL cvFocus := "";      // CVFOCUS as last seen
 
@@ -513,7 +514,7 @@ BEGIN
   LOCAL zs, zi, zid, zix, zch;
   zch := 0;
   zs := cvReadNote("CVLINK");
-  IF zs <> cvLink THEN cvLink := zs; cvLinkT := TICKS; END;
+  IF zs <> cvLink THEN cvLink := zs; cvOn := 1; END;
   IF cvOnline() <> cvWasOn THEN zch := 1; END;
   zs := cvReadNote("CVFOCUS");
   IF zs <> cvFocus THEN
@@ -530,10 +531,11 @@ BEGIN
   RETURN zch;
 END;
 
-// 1 while the online bridge on the PC is writing its heartbeat.
+// 1 when the online bridge on the PC wrote its heartbeat during the last
+// link box (it writes one per box, not a stream, to spare the flash).
 cvOnline()
 BEGIN
-  RETURN TICKS - cvLinkT < 12000;
+  RETURN cvOn;
 END;
 
 // "online" at the right of the title bar, when it is.
@@ -1269,23 +1271,30 @@ BEGIN
   RETURN zlab;
 END;
 
-// What a calculator key types in the editor. zal: 0 normal, 1 ALPHA
-// (capitals), 2 Shift+ALPHA (small letters). zsh: Shift was pressed first.
+// What a calculator key types in the editor, as the G2 keyboard is
+// labelled. zal, as on the calculator itself: 0 off, 1 one capital
+// (ALPHA), 2 one small letter (Shift ALPHA), 3 capitals locked (ALPHA
+// twice), 4 small letters locked (Shift ALPHA twice); in a lock, Shift
+// types the other case. zsh: Shift was pressed first, which types the
+// blue label: i (2), pi (3), |x| (+/-), x^-1 (divide), ASIN ACOS ATAN, e^x,
+// 10^x, sqrt (x^2), = (.), _ (space).
 cvKeyText(zk, zal, zsh)
 BEGIN
-  LOCAL zi, zs, zl;
+  LOCAL zi, zs, zl, zlow;
   IF zal > 0 THEN
     zi := POS({14,15,16,17,18,20,21,22,23,24,25,26,27,28,29,31,32,33,34,35,37,38,39,40,42,43}, zk);
     IF zi > 0 THEN
       zs := MID("ABCDEFGHIJKLMNOPQRSTUVWXYZ", zi, 1);
-      IF zal == 2 THEN zs := LOWER(zs); END;
+      zlow := zal == 2 OR zal == 4;
+      IF zsh AND zal >= 3 THEN zlow := 1 - zlow; END;
+      IF zlow THEN zs := LOWER(zs); END;
       RETURN zs;
     END;
   END;
   IF zsh THEN
-    zi := POS({28,21,22,23,24,25,49,48,26,50}, zk);
+    zi := POS({28,21,22,23,24,25,49,48,26,50,43,44,27,35}, zk);
     IF zi > 0 THEN
-      zl := {")","asin(","acos(","atan(","exp(","10^","_","=","sqrt(","+"};
+      zl := {")","asin(","acos(","atan(","exp(","10^","_","=","sqrt(","+","i","π","abs(","^(-1)"};
       RETURN zl(zi);
     END;
   END;
@@ -1297,7 +1306,7 @@ BEGIN
   RETURN "";
 END;
 
-cvDrawEdit(ztitle, zt, zp, zpg, zal, zline)
+cvDrawEdit(ztitle, zt, zp, zpg, zal, zline, zsh)
 BEGIN
   LOCAL zs;
   DIMGROB_P(G1, 320, 240, RGB(255, 255, 255));
@@ -1315,18 +1324,24 @@ BEGIN
       IF cvKb THEN
         cvDrawPal(58, 100);
       ELSE
-        TEXTOUT_P("Tap a name to type it.  ALPHA: capitals", G1, 6, 58, 1, RGB(110, 110, 110), 308);
+        TEXTOUT_P("Tap a name to type it.  Shift 2: i   Shift 3: π", G1, 6, 58, 1, RGB(110, 110, 110), 308);
         cvDrawPal(72, 210);
       END;
     ELSE
-      zs := "Enter: done   Esc: cancel   Units key: _";
+      zs := "Enter: done   Esc: cancel   Shift space: _";
       TEXTOUT_P(zs, G1, 6, 62, 1, RGB(110, 110, 110), 308);
-      TEXTOUT_P("ALPHA: capitals   Shift ALPHA: small letters", G1, 6, 76, 1, RGB(110, 110, 110), 308);
+      TEXTOUT_P("ALPHA: A (twice: lock)   Shift ALPHA: a (twice: lock)", G1, 6, 76, 1, RGB(110, 110, 110), 308);
     END;
+  END;
+  // What the next key will type: Shift (blue) and the alpha mode (orange):
+  // A or a for one letter, ABC or abc while locked.
+  IF zsh THEN
+    RECT_P(G1, 232, 2, 272, 18, RGB(40, 90, 200), RGB(40, 90, 200));
+    TEXTOUT_P("Shift", G1, 238, 4, 1, RGB(255, 255, 255), 32);
   END;
   IF zal > 0 THEN
     RECT_P(G1, 276, 2, 316, 18, RGB(240, 190, 70), RGB(240, 190, 70));
-    TEXTOUT_P(IFTE(zal == 1, "ABC", "abc"), G1, 282, 4, 2, RGB(0, 0, 0), 32);
+    TEXTOUT_P(MID("A  a  ABCabc", 3 * zal - 2, 3), G1, 282, 4, 2, RGB(0, 0, 0), 32);
   END;
   IF cvKb THEN cvDrawKb(zpg); END;
   BLIT_P(G0, G1);
@@ -1354,7 +1369,7 @@ BEGIN
   END;
   cvArmed := 0; cvDown := 0;
   REPEAT
-    cvDrawEdit(ztitle, zt, zp, zpg, zal, zline);
+    cvDrawEdit(ztitle, zt, zp, zpg, zal, zline, zsh);
     ze := cvEvent(0);
     zs := "";
     IF ze(1) == 1 THEN
@@ -1371,12 +1386,20 @@ BEGIN
         END;
         IF zk == 41 THEN zsh := 1 - zsh; END;
         IF zk == 36 THEN
-          IF zsh THEN zal := 2; ELSE zal := IFTE(zal == 0, 1, 0); END;
+          // As on the calculator: ALPHA one capital, again to lock, again
+          // off; Shift ALPHA the same for small letters.
+          IF zsh THEN
+            zal := IFTE(zal == 2, 4, IFTE(zal == 4, 0, 2));
+          ELSE
+            zal := IFTE(zal == 1, 3, IFTE(zal == 0, 1, 0));
+          END;
           zsh := 0;
         END;
         DEFAULT
           zs := cvKeyText(zk, zal, zsh);
           zsh := 0;
+          // A one-letter ALPHA ends with the letter.
+          IF (zal == 1 OR zal == 2) AND DIM(zs) > 0 THEN zal := 0; END;
       END;
     END;
     IF ze(1) == 2 THEN
@@ -1611,6 +1634,8 @@ BEGIN
   Notes("CVBOX") := "down";
   cvArmed := 0; cvDown := 0;
   cvIdle0 := TICKS;
+  // Online only if the PC wrote a heartbeat while the box was up.
+  cvOn := 0;
   cvPoll();
 END;
 
@@ -2153,7 +2178,7 @@ BEGIN
   cvLoadShared();
   // What the bridge said before this start is not news: neither "online"
   // until its heartbeat changes, nor a calculator to jump to.
-  cvLink := cvReadNote("CVLINK"); cvLinkT := TICKS - 100000; cvWasOn := 0;
+  cvLink := cvReadNote("CVLINK"); cvOn := 0; cvWasOn := 0;
   cvFocus := cvReadNote("CVFOCUS");
   // Back to the calculator that was open when CalcVault was last left.
   IF DIM(cvOpenId) > 0 THEN

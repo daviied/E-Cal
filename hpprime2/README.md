@@ -101,9 +101,16 @@ page of functions, Greek letters and comparisons, and the variable palette
 above it. The calculator's own keys work too:
 
 - digits, `+ - × ÷ ^ ( ) .`, SIN COS TAN LN LOG, and **x t θ n** for `x`
-- **Units** types `_`, for names like `X_1`
-- **ALPHA** then a key types a capital letter (it stays on until pressed
-  again); **Shift ALPHA** for small letters
+- **Shift** then a key types its blue label: **Shift 2** *i*, **Shift 3**
+  π, **Shift +/−** \|x\| (`abs(`), **Shift ÷** x⁻¹, **Shift x²** √, ASIN
+  ACOS ATAN, eˣ, 10ˣ, **Shift .** `=`, **Shift space** `_` (for names like
+  `X_1`; the Units key types `_` too). A blue Shift badge shows while it is
+  on.
+- Letters work as on the calculator itself: **ALPHA** then a key types one
+  capital, **ALPHA ALPHA** locks capitals (ALPHA again unlocks); **Shift
+  ALPHA** types one small letter, twice locks small letters. While locked,
+  Shift then a letter types the other case. An orange badge shows A or a
+  (one letter) or ABC or abc (locked).
 - ◄ ► move the cursor, **Del** deletes, **Enter** accepts (in an Eq line:
   accepts and starts the next one), **Esc** cancels
 
@@ -198,9 +205,10 @@ open:
   Esc for you: the box closes and the new data shows. Otherwise close it
   with Enter or Esc whenever you want to carry on; what you change is sent
   the next time the box is up.
-- The calculator's title bar shows a green **online** badge (the page or
-  the PC tool writes a heartbeat every few seconds; the badge goes after
-  about 12 s without).
+- The calculator's title bar shows a green **online** badge when the page
+  or the PC tool wrote its heartbeat during the last link box. It writes
+  one per box, not a steady stream: every note written lands in the
+  calculator's flash memory, so online mode writes only what it must.
 - Opening a calculator in the web app opens it on the calculator too
   (Settings > Follow the web app).
 
