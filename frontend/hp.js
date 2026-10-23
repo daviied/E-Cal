@@ -619,12 +619,13 @@ const panel = {
 // this page. About once a second it asks the calculator for CVREV, which the
 // app changes on every save, and every couple of seconds the server for the
 // tree; a change on either side runs the usual sync (the server's merge). It
-// also writes CVLINK every few seconds (the app shows "online" while that
-// keeps changing) and, when a calculator is opened here, CVFOCUS (the app
-// opens it too). Only one tab runs it, through a Web Lock.
+// also writes CVLINK once each time the calculator starts answering (once per
+// link box: every write lands in the calculator's flash, so not a stream; the
+// app shows "online" when its last box got one) and, when a calculator is
+// opened here, CVFOCUS (the app opens it too). Only one tab runs it, through a
+// Web Lock.
 const ONLINE_TICK = 1000;
 const WEB_EVERY = 2000;
-const BEAT_EVERY = 4000;
 const ONLINE_KEY = 'calcvault.hp.online';
 
 function rememberOnline(on) {
@@ -656,7 +657,7 @@ if (panel.open) {
   let lastRev; // CVREV after the last sync (undefined: none yet)
   let lastWeb = null; // the tree after the last sync
   let tWeb = 0;
-  let tBeat = 0;
+  let beatSent = false; // a heartbeat written since the calculator last went quiet
   let answering = false;
   let misses = 0;
   let lastError = '';
@@ -866,7 +867,13 @@ if (panel.open) {
         misses = 0;
         if (rev !== lastRev) needSync = true;
         if (!was) say(stamp() + '  online: the calculator is answering');
+        if (!beatSent) {
+          // One heartbeat per stretch of answering (per link box).
+          await l.putNote('CVLINK', 'b' + token(), true);
+          beatSent = true;
+        }
       } else {
+        beatSent = false;
         misses++;
         // A calculator never synced has no CVREV yet: one sync makes it.
         if (lastRev === undefined && misses === 1) needSync = true;
@@ -886,6 +893,7 @@ if (panel.open) {
       if (e.message !== lastError) say(stamp() + '  online: ' + e.message);
       lastError = e.message;
       answering = false;
+      beatSent = false;
       if (e instanceof LinkError || e instanceof LinkTimeout) dropLink();
       ticking = false;
       refresh();
@@ -919,10 +927,6 @@ if (panel.open) {
         pendingFocus = null;
         await link.putNote('CVFOCUS', id + ';' + token(), true);
         await closeBox(link);
-      }
-      if (performance.now() - tBeat >= BEAT_EVERY) {
-        await link.putNote('CVLINK', 'b' + token(), true);
-        tBeat = performance.now();
       }
     } catch (e) {
       say(stamp() + '  online: ' + e.message);
@@ -975,7 +979,7 @@ if (panel.open) {
     lastRev = undefined;
     lastWeb = null;
     tWeb = 0;
-    tBeat = 0;
+    beatSent = false;
     misses = 0;
     answering = false;
     lastError = '';
