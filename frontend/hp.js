@@ -26,7 +26,7 @@ class LinkTimeout extends Error {}
 
 const BUSY =
   'the calculator stopped taking data: it does not answer USB while a program is running. Close ' +
-  'the program, or in CalcVault 2 turn on Settings > Let the PC sync while open.';
+  'the program, or in CalcVault 2 wait for its "linked to the PC" box.';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -321,10 +321,21 @@ class PrimeLink {
 
   // Reassembles one reply, stopping at the length it declares. `first` limits
   // the wait for the reply to start; `timeout` then limits the whole reply.
+  //
+  // Measured on a G2 plugged straight into a Windows PC (2026-10-23): it sends
+  // every file reply twice, and the second copy can start before the first has
+  // finished, so their reports interleave. Both copies number their reports
+  // 0, 1, 2, ... and carry the same bytes, so each report is put in its place by
+  // its number and a repeat is dropped; the reply's checksum (parseFileReply)
+  // still catches a mix-up with another reply. Past 255 reports the numbers
+  // wrap, so such a reply is read in order, starting again on a new copy.
   async _reply(cmd, timeout, first = null) {
+    const cap = this.report - 1;
+    const parts = new Map();
     const chunks = [];
     let total = 0;
-    let expect = cmd === CMD_CHECK_READY ? 1 : null;
+    let expect = null;
+    let need = null;
     let index = 0;
     const start = performance.now();
     let deadline = start + (first || timeout);
@@ -336,24 +347,57 @@ class PrimeLink {
       const seq = rep[0];
       const payload = rep.subarray(1, this.report);
       if (seq === 0xff) continue; // out-of-band report
-      if (index === 0) {
-        const head = payload[0];
-        if (cmd === CMD_CHECK_READY && head !== 0xff && head !== 0x59) continue;
-        if (cmd === CMD_FILE && head !== CMD_FILE && head !== CMD_BACKUP) continue;
+      const head = payload[0];
+      const starts =
+        seq === 0 &&
+        (cmd === CMD_CHECK_READY ? head === 0xff || head === 0x59 : head === CMD_FILE || head === CMD_BACKUP);
+      if (need === null) {
+        if (!starts) continue;
         deadline = start + timeout; // it has started; allow the rest
-      }
-      if (seq !== index % 255) throw new LinkError('reply out of sequence (' + seq + ', expected ' + (index % 255) + ')');
-      index++;
-      chunks.push(payload);
-      total += payload.length;
-      if (expect === null && total >= 6) {
-        const head = cat(...chunks);
-        if (head[0] === CMD_BACKUP) return head.slice(0, 1);
-        if (head[1] !== 0x01) throw new LinkError('unexpected reply header');
-        expect = 6 + (((head[2] << 24) | (head[3] << 16) | (head[4] << 8) | head[5]) >>> 0);
+        if (cmd === CMD_CHECK_READY || head === CMD_BACKUP) return payload.slice(0, 1);
+        if (payload[1] !== 0x01) throw new LinkError('unexpected reply header');
+        expect = 6 + (((payload[2] << 24) | (payload[3] << 16) | (payload[4] << 8) | payload[5]) >>> 0);
         if (expect > 64 * 1024 * 1024) throw new LinkError('implausible reply length');
+        need = Math.max(1, Math.ceil(expect / cap));
       }
-      if (expect !== null && total >= expect) return cat(...chunks).slice(0, expect);
+      if (need <= 255) {
+        if (!parts.has(seq)) parts.set(seq, payload.slice());
+        if (parts.size >= need) {
+          let all = true;
+          for (let i = 0; i < need; i++) if (!parts.has(i)) all = false;
+          if (all) {
+            const list = [];
+            for (let i = 0; i < need; i++) list.push(parts.get(i));
+            return cat(...list).slice(0, expect);
+          }
+        }
+        continue;
+      }
+      // Too long to place by number: in order, restarting on a new copy.
+      if (starts) {
+        chunks.length = 0;
+        total = 0;
+        index = 0;
+      }
+      if (seq !== index % 255) continue;
+      index++;
+      chunks.push(payload.slice());
+      total += payload.length;
+      if (total >= expect) return cat(...chunks).slice(0, expect);
+    }
+  }
+
+  // Drops whatever the calculator is still sending (the second copy of a reply)
+  // until it has been quiet for `quietMs`.
+  async _settle(quietMs = 1000, limitMs = 20000) {
+    const end = performance.now() + limitMs;
+    let last = performance.now();
+    while (performance.now() - last < quietMs && performance.now() < end) {
+      if (this.inbox.length) {
+        this.inbox.length = 0;
+        last = performance.now();
+      }
+      await sleep(20);
     }
   }
 
@@ -376,55 +420,80 @@ class PrimeLink {
     return !!r && r.length > 0 && (r[0] === 0xff || r[0] === 0x59);
   }
 
-  // A request is usually answered in about 0.1 s, but while the calculator is
-  // still storing a note it has just received, answers come seconds late. Every
-  // answer names its note, so an answer for another note is set aside. A note
-  // that does not exist is never answered at all.
-  async getObject(name, ftype, windows = [2500, 2500, 2500, 2500, 2500]) {
-    const t0 = performance.now();
-    const seen = [];
-    this.lastRead = null;
-    await sleep(60); // do not hammer the calculator with back-to-back requests
-    for (let attempt = 0; attempt < windows.length; attempt++) {
-      await this.checkReady(2000);
-      await this._drain();
-      await this._send(fileMessage(CMD_REQUEST_FILE, name, ftype));
-      const end = performance.now() + windows[attempt];
-      while (performance.now() < end) {
-        let reply;
-        try {
-          reply = await this._reply(CMD_FILE, 60000, Math.max(50, end - performance.now()));
-        } catch (e) {
-          if (e instanceof LinkTimeout) break;
-          throw e;
-        }
-        const got = parseFileReply(reply);
-        if (got === null) {
-          this.lastRead = { name, outcome: 'the calculator said it has no such note', asked: attempt + 1, seen };
-          return null;
-        }
-        if (got.name === name && got.type === ftype) {
-          if (attempt > 0) {
-            this.log(name + ': answered on request ' + (attempt + 1) + ' after ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s');
-          }
-          return got.content;
-        }
-        seen.push(got.name);
+  // How the G2 behaves, measured plugged straight into a Windows PC
+  // (2026-10-23): it works through requests strictly one at a time, in the
+  // order they came, and keeps the rest waiting (ready checks included) for as
+  // long as that takes; a backup, about 12 s, holds up everything after it.
+  // Nothing is dropped, except a request for a note it does not have, which is
+  // never answered. So a request given up on and sent again is answered twice,
+  // later, in the middle of whatever is asked next: the "reads one or two
+  // notes, then stops" failure. Hence one request at a time, waited for, never
+  // re-sent blindly. Answers for other notes that arrive first are passed over.
+  async getObject(name, ftype, patienceMs = 30000) {
+    await this._drain();
+    await this._send(fileMessage(CMD_REQUEST_FILE, name, ftype));
+    const end = performance.now() + patienceMs;
+    while (performance.now() < end) {
+      let got;
+      try {
+        got = parseFileReply(await this._reply(CMD_FILE, 60000, Math.max(50, end - performance.now())));
+      } catch (e) {
+        if (e instanceof LinkTimeout) break;
+        if (e instanceof LinkError) continue; // a reply mixed up with another; ours may follow
+        throw e;
+      }
+      if (got === null) return null;
+      if (got.name === name && got.type === ftype) {
+        await this._settle(300); // the second copy of this reply
+        return got.content;
       }
     }
-    this.lastRead = {
-      name,
-      outcome: 'no answer',
-      asked: windows.length,
-      secs: Math.round((performance.now() - t0) / 1000),
-      seen,
-    };
     return null;
+  }
+
+  // Every note on the calculator, from one backup request (0xF9): the calculator
+  // streams all its objects and ends with an F9 frame (about 12 s). Prime
+  // Connection Kit reads a calculator this way. A backup asked for earlier and
+  // still waiting would look the same, so a note CVMARK is written with a new
+  // token first: requests are handled in order, so the first backup holding
+  // that token is this one, and shows everything written before it.
+  // -> {notes: Map(name -> text), complete}
+  async backupNotes(wholeMs = 300000) {
+    const token = 'm' + Math.random().toString(16).slice(2, 12);
+    await this.putObject('CVMARK', TYPE_NOTE, noteBytes(token));
+    await this._send(Uint8Array.of(CMD_BACKUP));
+    let notes = new Map();
+    const end = performance.now() + wholeMs;
+    while (performance.now() < end) {
+      let reply;
+      try {
+        reply = await this._reply(CMD_FILE, 60000, Math.max(1000, end - performance.now()));
+      } catch (e) {
+        if (e instanceof LinkTimeout) break;
+        if (e instanceof LinkError) continue;
+        throw e;
+      }
+      if (reply[0] === CMD_BACKUP) {
+        if (notes.get('CVMARK') === token) {
+          await this._settle(500, 10000);
+          return { notes, complete: true };
+        }
+        notes = new Map(); // an older backup's stream: not ours
+        continue;
+      }
+      let got = null;
+      try {
+        got = parseFileReply(reply);
+      } catch (e) {
+        continue; // a damaged frame; its copy follows
+      }
+      if (got && got.type === TYPE_NOTE) notes.set(got.name, noteText(got.content)); // a later copy is newer
+    }
+    return { notes, complete: false };
   }
 
   async putObject(name, ftype, content) {
     if (ftype === TYPE_NOTE && content[0] === 0xff && content[1] === 0xfe) content = content.subarray(2);
-    await this.checkReady(2500);
     await this._drain();
     await this._send(fileMessage(CMD_FILE, name, ftype, content));
     try {
@@ -438,11 +507,14 @@ class PrimeLink {
     await this.reopen();
   }
 
+  // A fresh connection, then a ready check waited for patiently: the calculator
+  // answers it only after whatever it is still doing. Opening and the first
+  // send can fail for a moment after a write; that is tried again.
   async reopen(waitMs = 8000) {
     await this.closeQuiet();
     const end = performance.now() + waitMs;
     let last = null;
-    while (performance.now() < end) {
+    for (;;) {
       await sleep(400);
       try {
         if (!this.dev.opened) {
@@ -451,77 +523,78 @@ class PrimeLink {
           } catch (e) {
             // The calculator may have re-enumerated: look for it again.
             const found = (await navigator.hid.getDevices()).filter(matches);
-            if (!found.length) continue;
-            this._attach(found[0]);
-            await this.dev.open();
+            if (found.length) {
+              this._attach(found[0]);
+              await this.dev.open();
+            }
           }
         }
-        if (await this.checkReady(2000)) return;
-        await this.closeQuiet();
+        if (this.dev.opened) {
+          if (await this.checkReady(30000)) return;
+          throw new LinkError('the calculator did not answer after a write');
+        }
       } catch (e) {
         last = e;
         await this.closeQuiet();
+        if (e instanceof LinkError && /did not answer/.test(e.message)) throw e;
+      }
+      if (performance.now() > end) {
+        throw new LinkError('the calculator did not come back after a write' + (last ? ' (' + last.message + ')' : ''));
       }
     }
-    throw new LinkError('the calculator did not come back after a write' + (last ? ' (' + last.message + ')' : ''));
   }
 
-  async getNote(name, windows) {
-    const content = await this.getObject(name, TYPE_NOTE, windows);
+  // Presses one key on the calculator (0xEC, as Prime Connection Kit sends it);
+  // measured: Esc (4) closes a program's CHOOSE dialog.
+  async sendKey(code) {
+    await this._drain();
+    await this._send(Uint8Array.of(0xec, 0x01, 0x00, 0x00, 0x00, 0x01, code));
+  }
+
+  async getNote(name, patienceMs) {
+    const content = await this.getObject(name, TYPE_NOTE, patienceMs);
     return content === null ? null : noteText(content);
   }
 
   // An existing note keeps its shape, which costs a read; `isNew` skips it
-  // (a request for a note that does not exist goes unanswered, ~20 s).
+  // (CalcVault's own notes need no shape). The backup held is out of date then.
   async putNote(name, text, isNew = false) {
-    const existing = isNew ? null : await this.getObject(name, TYPE_NOTE);
+    const existing = isNew ? null : await this.getObject(name, TYPE_NOTE, 5000);
     await this.putObject(name, TYPE_NOTE, noteBytes(text, existing));
+    if (this.snap) this.snap.complete = false;
   }
 }
 
-// What cvsync.store.UsbTarget.read does: an unanswered request is retried on
-// fresh connections, and an unanswered CVDATA is only taken to mean "no vault"
-// when the calculator has no other CalcVault notes either.
-// Seconds a G2 is given to answer for a note the index says exists.
-const PATIENT_READ = [6000, 10000, 14000];
-
-async function readNote(link, name) {
-  let text = await link.getNote(name, name.startsWith('CVC') ? PATIENT_READ : undefined);
-  if (text !== null) return text;
-  if (name.startsWith('CVC')) {
-    // The index lists this note, so it exists: be patient (a G2 can take
-    // several seconds to answer) rather than ask over and over.
-    for (let i = 0; i < 1; i++) {
-      await link.reopen();
-      text = await link.getNote(name, PATIENT_READ);
-      if (text !== null) return text;
-    }
-    const r = link.lastRead || {};
+// What cvsync.store.UsbTarget does: a sync reads everything at once with a
+// backup (prefetchNotes, about 12 s) and its reads are served from that; a read
+// after something was written takes a new backup. `fresh` (CVREV, which is how
+// a change on the calculator is noticed) always asks the calculator by name.
+async function prefetchNotes(link) {
+  link.snap = await link.backupNotes();
+  if (!link.snap.complete) {
     throw new LinkError(
-      name + ' did not arrive: ' + (r.outcome || 'no answer') +
-        (r.asked ? ' (asked ' + r.asked + ' times over ' + (r.secs || '?') + ' s' : ' (') +
-        (r.seen && r.seen.length ? '; other notes it sent instead: ' + [...new Set(r.seen)].join(', ') : '') +
-        '). Nothing was changed. Close CalcVault on the calculator, leave it on the Home screen, and try again.'
+      'the calculator did not finish sending its notes. Make sure it is on the Home screen or in ' +
+        'CalcVault 2, then try again.'
     );
   }
-  if (name !== 'CVDATA') return text;
-  for (let i = 0; i < 3; i++) {
-    await link.reopen();
-    text = await link.getNote(name);
-    if (text !== null) return text;
-  }
-  for (const other of ['CVREV', 'CVBAK', 'CVSET']) {
-    if ((await link.getNote(other)) !== null) {
-      throw new LinkError(
-        'the calculator has CalcVault data but did not answer when asked for it. Make sure it is ' +
-          'on the Home screen with nothing open, then try again.'
-      );
-    }
-  }
-  return null;
+  return link.snap;
 }
 
-window.CalcVaultHP = { crc16, nameBytes, fileMessage, parseFileReply, fragment, noteText, noteBytes, PrimeLink, readNote };
+function notePresent(link, name) {
+  if (!link.snap || !link.snap.complete) return null;
+  return link.snap.notes.has(name);
+}
+
+async function readNote(link, name, fresh = false) {
+  if (fresh) return link.getNote(name);
+  if (!link.snap || !link.snap.complete) await prefetchNotes(link);
+  return link.snap.notes.has(name) ? link.snap.notes.get(name) : null;
+}
+
+window.CalcVaultHP = {
+  crc16, nameBytes, fileMessage, parseFileReply, fragment, noteText, noteBytes, PrimeLink, readNote,
+  prefetchNotes, notePresent,
+};
 
 // ------------------------------------------------------------- the panel
 
@@ -588,6 +661,7 @@ if (panel.open) {
   let misses = 0;
   let lastError = '';
   let pendingFocus = null;
+  let lastSyncTree = null; // the web app's tree as the last sync left it
 
   const supported = !!navigator.hid && window.isSecureContext;
 
@@ -693,8 +767,10 @@ if (panel.open) {
     refresh();
     let ws = null;
     let ok = false;
+    lastSyncTree = null;
     try {
       const l = await ensureLink();
+      l.snap = null;
       const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/hp/ws';
       ws = new WebSocket(url);
       await new Promise((resolve, reject) => {
@@ -713,8 +789,11 @@ if (panel.open) {
             send({ type: 'confirm', id: m.id, yes: await askConfirm(m.text) });
           } else if (m.type === 'req') {
             try {
-              if (m.op === 'read') {
-                send({ type: 'reply', id: m.id, text: await readNote(l, m.name) });
+              if (m.op === 'prefetch') {
+                const snap = await prefetchNotes(l);
+                send({ type: 'reply', id: m.id, names: [...snap.notes.keys()], complete: snap.complete });
+              } else if (m.op === 'read') {
+                send({ type: 'reply', id: m.id, text: await readNote(l, m.name, !!m.fresh) });
               } else {
                 await l.putNote(m.name, m.text, m.new);
                 send({ type: 'reply', id: m.id, ok: true });
@@ -732,6 +811,7 @@ if (panel.open) {
       else if (result.code !== 0) say(stamp() + '  stopped; nothing was synced');
       else if (!auto || result.changed) say(stamp() + (result.changed ? '  synced' : '  already in sync'));
       ok = !result.error && result.code === 0;
+      lastSyncTree = result.tree ? JSON.stringify(result.tree) : null;
     } catch (e) {
       say(stamp() + '  ' + e.message);
       // A dead link (unplugged, or left busy) is dropped so the next try reconnects.
@@ -749,18 +829,26 @@ if (panel.open) {
 
   // ---- online mode
 
+  // The web app's folders and calculators, as a string to compare.
   async function webTree() {
     const res = await fetch('/api/tree', { credentials: 'same-origin' });
     if (!res.ok) throw new Error('the web app answered ' + res.status + (res.status === 401 ? ' (not logged in)' : ''));
-    return res.text();
+    return JSON.stringify(await res.json());
   }
 
   // The calculator's CVREV, or null when it does not answer in time (or has
   // no CalcVault notes yet). One short try: this runs every second.
-  const revOf = (l) => l.getNote('CVREV', [1500]);
+  const revOf = (l) => l.getNote('CVREV', 5000);
 
   function token() {
     return Math.random().toString(16).slice(2, 10);
+  }
+
+  // CalcVault 2 waits in a "linked to the PC" box while idle, the only time a
+  // running program lets the calculator answer; it notes CVBOX "up" meanwhile.
+  // Once something was sent, Esc closes the box so the app shows it at once.
+  async function closeBox(l) {
+    if ((await l.getNote('CVBOX', 5000)) === 'up') await l.sendKey(4);
   }
 
   async function onlineTick() {
@@ -768,9 +856,10 @@ if (panel.open) {
     ticking = true;
     let needSync = false;
     let l = null;
+    let rev = null;
     try {
       l = await ensureLink();
-      const rev = await revOf(l);
+      rev = await revOf(l);
       const was = answering;
       answering = rev !== null;
       if (answering) {
@@ -782,8 +871,8 @@ if (panel.open) {
         // A calculator never synced has no CVREV yet: one sync makes it.
         if (lastRev === undefined && misses === 1) needSync = true;
         if (misses === 3) {
-          say(stamp() + '  online: the calculator does not answer. Open CalcVault 2 on it (with Settings > ' +
-            'Let the PC sync while open on), or leave it on its Home screen.');
+          say(stamp() + '  online: the calculator does not answer yet. In CalcVault 2 it answers while its ' +
+            '"linked to the PC" box is up (leave it alone for 15 s), or on the Home screen.');
         }
       }
       if (pendingFocus !== null) tWeb = 0; // a calculator just made here must reach it first
@@ -809,9 +898,13 @@ if (panel.open) {
       if (!(await runSync(true))) return;
       ticking = true;
       try {
-        lastRev = await revOf(link || l);
-        lastWeb = await webTree();
+        // The tree the server had when the sync ended, not one read now: an
+        // edit made in between would otherwise be taken as already synced.
+        lastWeb = lastSyncTree || (await webTree());
         tWeb = performance.now();
+        lastRev = await revOf(link || l);
+        // The sync wrote to the calculator (its mark is a "p..." CVREV).
+        if (lastRev && lastRev !== rev && lastRev.startsWith('p')) await closeBox(link || l);
       } catch (e) {
         lastRev = undefined;
       } finally {
@@ -825,6 +918,7 @@ if (panel.open) {
         const id = pendingFocus;
         pendingFocus = null;
         await link.putNote('CVFOCUS', id + ';' + token(), true);
+        await closeBox(link);
       }
       if (performance.now() - tBeat >= BEAT_EVERY) {
         await link.putNote('CVLINK', 'b' + token(), true);

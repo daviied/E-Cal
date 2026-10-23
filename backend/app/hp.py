@@ -125,9 +125,22 @@ class RemoteTarget:
 
     def __init__(self, bridge):
         self.bridge = bridge
+        self.names = None  # notes in the browser's last complete backup
 
-    def read(self, name="CVDATA"):
-        r = self.bridge.ask({"type": "req", "op": "read", "name": name}, self.READ_TIMEOUT)
+    def prefetch(self):
+        """Everything at once at the start of a sync (store.read_vault): the
+        browser takes one backup and serves the reads that follow from it,
+        as store.UsbTarget does. See cvsync.primelink for why."""
+        r = self.bridge.ask({"type": "req", "op": "prefetch"}, 600)
+        if r.get("error"):
+            raise RemoteError(r["error"])
+        self.names = set(r.get("names") or []) if r.get("complete") else None
+
+    def present(self, name):
+        return None if self.names is None else name in self.names
+
+    def read(self, name="CVDATA", fresh=False):
+        r = self.bridge.ask({"type": "req", "op": "read", "name": name, "fresh": fresh}, self.READ_TIMEOUT)
         if r.get("error"):
             raise RemoteError(r["error"])
         return r.get("text")
@@ -137,9 +150,11 @@ class RemoteTarget:
                             self.READ_TIMEOUT)
         if r.get("error"):
             raise RemoteError(r["error"])
+        self.names = None  # the browser's backup is out of date now
 
     def read_rev(self):
-        return self.read("CVREV")
+        # Always asked for by name: this is how a change on the calculator is noticed.
+        return self.read("CVREV", fresh=True)
 
     def write_rev(self, token):
         self.write(token, "CVREV")

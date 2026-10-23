@@ -225,7 +225,7 @@ now.
 tool (the first, `hpprime/`, is unchanged). It adds Enter-for-a-new-Eq-line,
 a tap-to-type palette of the calculator's variable names, shared lines on
 the calculator, and an **online mode**: the calculator works as a remote for
-this app, kept in step within a second or two while CalcVault 2 is open on
+this app, kept in step within about half a minute while CalcVault 2 is open on
 it, and opening a calculator here opens it there too. Online mode runs in
 this page (the **Online** switch in the HP Prime panel below; nothing to
 install), or from the PC tool `hpprime2/sync/Online CalcVault.bat`, which
@@ -253,7 +253,7 @@ with CalcVault closed, close HP's Connectivity Kit, then in the panel press
 **Connect calculator** (pick the HP Prime in the browser's chooser, once) and
 **Sync now**. A sync that would delete something or resolve a conflict shows
 what it will do and asks first. **Online** keeps syncing by itself (within a
-second or two of a change on either side) and does *not* ask, like the PC
+half a minute of a change on either side) and does *not* ask, like the PC
 tool's live mode, with backups as the safety net. It is meant for CalcVault 2
 left open on the calculator (it also shows "online" there and opens what you
 open here), stays on for this browser until switched off, and restarts by
